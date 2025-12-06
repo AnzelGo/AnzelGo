@@ -1,0 +1,7 @@
+# Archivo .gitignore
+# Excluye variables secretas y archivos temporales
+.env
+__pycache__/
+*.pyc
+*.session
+*.session-journal
