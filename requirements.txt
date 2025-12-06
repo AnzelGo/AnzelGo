@@ -1,0 +1,6 @@
+pyrogram
+tgcrypto
+ffmpeg-python
+nest-asyncio
+psutil
+python-dotenv
