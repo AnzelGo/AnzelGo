@@ -186,7 +186,7 @@ async def run_compression_flow(client, chat_id, status_message):
             '-r', '30',  # <-- fps definido aquí
             '-crf', opts['crf'],
             '-preset', opts['preset'],
-            '-vcodec', 'libx264',
+            '-vcodec', '-vf',
             '-acodec', 'aac',
             '-b:a', '64k',
             '-movflags', '+faststart',
