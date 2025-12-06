@@ -180,20 +180,33 @@ async def run_compression_flow(client, chat_id, status_message):
 
         await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO...")
 
-        cmd = [
-            'ffmpeg', '-i', downloaded_path,
-            '-vf', f"scale=-2:{opts['resolution']}",
-            '-r', '30',  # <-- fps definido aquí
-            '-crf', opts['crf'],
-            '-preset', opts['preset'],
-            '-vcodec', 'mpeg4',
-            '-acodec', 'aac',
-            '-b:a', '64k',
-            '-movflags', '+faststart',
-            '-progress', 'pipe:1',
-            '-nostats',
-            '-y', output_path
-        ]
+        cmd = [ 
+'ffmpeg', 
+'-i', 
+downloaded_path, 
+'-vf', 
+f"scale=-2:{opts['resolution']}", 
+'-r', 
+'30', 
+'-crf', 
+opts['crf'], 
+'-preset', 
+opts['preset'], 
+'-vcodec', 
+'libx264', 
+'-tune', 
+'psnr', 
+'-acodec', 
+'aac', 
+'-b:a', 
+'64k', 
+'-movflags', 
+'+faststart', 
+'-progress', 
+'pipe:1', 
+'-nostats', 
+'-y', 
+output_path ]
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
