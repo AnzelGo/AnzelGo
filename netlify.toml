@@ -1,7 +1,13 @@
 [build]
-  install = "/usr/bin/python3 -m pip install jupyter"
-  command = "/usr/bin/python3 -m jupyter notebook --allow-root --ip=0.0.0.0 --port=8080"
+  # ❌ Se eliminó: install = "/usr/bin/python3 -m pip install jupyter"
+  # ❌ Se eliminó: command = "/usr/bin/python3 -m jupyter notebook --allow-root --ip=0.0.0.0 --port=8080"
+  
+  # ✅ Nuevo comando: Le indica a Netlify que no hay paso de compilación necesario.
+  command = "echo 'no build required'" 
+  
+  # ✅ Publish: Se mantiene apuntando a la raíz del repositorio (o la carpeta donde estén tus archivos HTML/CSS).
   publish = "."
+  
   [build.environment]
     API_ID = "$API_ID"
     API_HASH = "$API_HASH"
