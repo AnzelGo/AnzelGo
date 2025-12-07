@@ -1,7 +1,43 @@
-# Archivo .gitignore
-# Excluye variables secretas y archivos temporales
+# ------------------------------------
+# 1. SECRETOS Y VARIABLES DE ENTORNO
+# ------------------------------------
+# ¡CRÍTICO! Evita subir archivos con claves secretas, tokens o contraseñas.
 .env
+*.key
+*.pem
+
+# ------------------------------------
+# 2. CARPETAS Y ARCHIVOS DE PYTHON
+# ------------------------------------
+# Entornos virtuales
+venv/
+.venv/
+
+# Archivos de caché
 __pycache__/
 *.pyc
-*.session
-*.session-journal
+
+# Archivos de log
+*.log
+dist/
+build/
+
+# ------------------------------------
+# 3. CARPETAS Y ARCHIVOS DE NODE.JS (Si usas JavaScript/TypeScript)
+# ------------------------------------
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# ------------------------------------
+# 4. ARCHIVOS GENERADOS POR EL SISTEMA OPERATIVO
+# ------------------------------------
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# VS Code (o cualquier IDE)
+.vscode/
+.idea/
