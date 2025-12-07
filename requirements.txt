@@ -6,4 +6,3 @@ psutil
 tqdm
 aiofiles
 Flask
-python-dotenv
