@@ -1,0 +1,7 @@
+[build]
+  command = "jupyter notebook --allow-root --ip=0.0.0.0 --port=8080"
+  publish = "."
+  [build.environment]
+    API_ID = "$API_ID"
+    API_HASH = "$API_HASH"
+    TOKEN_BOT = "$TOKEN_BOT"
