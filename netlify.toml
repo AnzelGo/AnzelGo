@@ -1,6 +1,9 @@
 [build]
   install = "pip install jupyter"
-  command = "jupyter notebook --allow-root --ip=0.0.0.0 --port=8080"
+  command = """
+    pip install jupyter && 
+    jupyter notebook --allow-root --ip=0.0.0.0 --port=8080
+  """
   publish = "."
   [build.environment]
     API_ID = "$API_ID"
