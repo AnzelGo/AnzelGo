@@ -1,8 +1,8 @@
 [build]
   install = ""
   command = """
-    python -m pip install jupyter && 
-    jupyter notebook --allow-root --ip=0.0.0.0 --port=8080
+    /usr/bin/python3 -m pip install jupyter && 
+    /usr/bin/python3 -m jupyter notebook --allow-root --ip=0.0.0.0 --port=8080
   """
   publish = "."
   [build.environment]
