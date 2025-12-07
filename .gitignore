@@ -1,15 +1,4 @@
-# ------------------------------------
-# 1. SECRETOS Y VARIABLES DE ENTORNO
-# ------------------------------------
-# ¡CRÍTICO! Evita subir archivos con claves secretas, tokens o contraseñas.
-.env
-*.key
-*.pem
-
-# ------------------------------------
-# 2. CARPETAS Y ARCHIVOS DE PYTHON
-# ------------------------------------
-# Entornos virtuales
+# Directorios de entornos virtuales de Python
 venv/
 .venv/
 
@@ -17,27 +6,15 @@ venv/
 __pycache__/
 *.pyc
 
-# Archivos de log
-*.log
-dist/
-build/
+# Archivos de configuración y secretos (¡CRUCIAL para seguridad!)
+# Nunca subas variables de entorno con tokens o contraseñas.
+.env
 
-# ------------------------------------
-# 3. CARPETAS Y ARCHIVOS DE NODE.JS (Si usas JavaScript/TypeScript)
-# ------------------------------------
-node_modules/
-npm-debug.log
-yarn-error.log
+# Archivos de sesión de Pyrogram
+# Estos son generados localmente y no deben subirse.
+*.session
+*.session-journal
 
-# ------------------------------------
-# 4. ARCHIVOS GENERADOS POR EL SISTEMA OPERATIVO
-# ------------------------------------
-# macOS
-.DS_Store
-
-# Windows
-Thumbs.db
-
-# VS Code (o cualquier IDE)
-.vscode/
-.idea/
+# Logs y otros datos temporales
+downloads/
+logs/
