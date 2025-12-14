@@ -107,7 +107,7 @@ async def progress_bar_handler(current, total, client, message, start_time, acti
     last_update_time = user_info.get('last_update_time', 0)
     current_time = time.time()
 
-    if current_time - last_update_time < 3:
+    if current_time - last_update_time < 5:
         return
     user_info['last_update_time'] = current_time
 
