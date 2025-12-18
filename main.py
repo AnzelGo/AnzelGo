@@ -13,21 +13,24 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, 
 from pyrogram.errors import MessageNotModified, FloodWait
 import nest_asyncio
 
-# Importaciones para el servidor web
+# Importaciones para el servidor web de Render
 from threading import Thread
 from flask import Flask
 
 # =======================================================
-# CÓDIGO PARA EL SERVIDOR WEB
+# CÓDIGO PARA EL SERVIDOR WEB (NO TOCAR)
 # =======================================================
+# Crea una instancia de la aplicación Flask
 app_flask = Flask(__name__)
 
+# Crea un endpoint simple para que Render haga ping
 @app_flask.route('/')
 def hello_world():
     return 'Bot is alive!'
 
+# Función para ejecutar la aplicación Flask en un hilo separado
 def run_server():
-    # Koyeb usa la variable PORT dinámicamente
+    # Ajuste de puerto para compatibilidad con Koyeb/Render
     port = int(os.environ.get('PORT', 8000))
     app_flask.run(host='0.0.0.0', port=port)
 
@@ -255,14 +258,18 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
 
         # Actualiza el mensaje solo cuando se recibe un bloque de información completo
         if 'progress' in ffmpeg_data and ffmpeg_data['progress'] == 'continue':
-            current_time_us = int(ffmpeg_data.get('out_time_us', 0))
+            # --- CAMBIO APLICADO AQUÍ PARA EVITAR ERROR VALUERROR ---
+            raw_time = ffmpeg_data.get('out_time_us', '0')
+            current_time_us = int(raw_time) if str(raw_time).isdigit() else 0
+            # -------------------------------------------------------
+
             if current_time_us == 0:
                 ffmpeg_data.clear()
                 continue
 
             # 💡 Nueva lógica para evitar inundar la API
             current_time = time.time()
-            if current_time - last_update < 1.5:  # Intervalo de actualización de 1.5 segundos
+            if current_time - last_update < 2.0:  # Intervalo de actualización de 2 segundos para mayor estabilidad
                 ffmpeg_data.clear()
                 continue
             last_update = current_time
@@ -271,7 +278,10 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
 
             # Usa 'speed' o calcula uno aproximado
             speed_str = ffmpeg_data.get('speed', '0x').replace('x', '')
-            speed_mult = float(speed_str) if speed_str else 0
+            try:
+                speed_mult = float(speed_str)
+            except:
+                speed_mult = 0
 
             percentage = min((current_time_sec / duration) * 100, 100) if duration > 0 else 0
             eta = (duration - current_time_sec) / speed_mult if speed_mult > 0 else 0
