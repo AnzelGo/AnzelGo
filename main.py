@@ -13,24 +13,23 @@ from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, 
 from pyrogram.errors import MessageNotModified, FloodWait
 import nest_asyncio
 
-# Importaciones para el servidor web de Render
+# Importaciones para el servidor web
 from threading import Thread
 from flask import Flask
 
 # =======================================================
-# CÓDIGO PARA EL SERVIDOR WEB (NO TOCAR)
+# CÓDIGO PARA EL SERVIDOR WEB
 # =======================================================
-# Crea una instancia de la aplicación Flask
 app_flask = Flask(__name__)
 
-# Crea un endpoint simple para que Render haga ping
 @app_flask.route('/')
 def hello_world():
     return 'Bot is alive!'
 
-# Función para ejecutar la aplicación Flask en un hilo separado
 def run_server():
-    app_flask.run(host='0.0.0.0', port=os.environ.get('PORT', 5000))
+    # Koyeb usa la variable PORT dinámicamente
+    port = int(os.environ.get('PORT', 8000))
+    app_flask.run(host='0.0.0.0', port=port)
 
 # =======================================================
 # LÓGICA DE TU BOT
