@@ -164,7 +164,7 @@ async def download_video(client, chat_id, status_message):
         return None
 
 async def run_compression_flow(client, chat_id, status_message):
-    """Orquesta el flujo de compresión: descarga y luego comprime."""
+    """Orquesta el flujo de compresión: descarga y luego comprime usando GPU NVENC."""
     downloaded_path = None
     try:
         downloaded_path = await download_video(client, chat_id, status_message)
@@ -180,15 +180,24 @@ async def run_compression_flow(client, chat_id, status_message):
         duration = float(probe.get('format', {}).get('duration', 0))
         original_size = os.path.getsize(downloaded_path)
 
-        await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO...")
+        await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (GPU)...")
+
+        # Mapeo de presets de CPU a GPU NVENC
+        preset_map = {
+            'ultrafast': 'p1', 'veryfast': 'p2', 'fast': 'p3', 
+            'medium': 'p4', 'slow': 'p6'
+        }
+        gpu_preset = preset_map.get(opts['preset'], 'p4')
 
         cmd = [
-            'ffmpeg', '-i', downloaded_path,
-            '-vf', f"scale=-2:{opts['resolution']}",
-            '-r', '30',  # <-- fps definido aquí
-            '-crf', opts['crf'],
-            '-preset', opts['preset'],
-            '-vcodec', 'libx264',
+            'ffmpeg', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda',
+            '-i', downloaded_path,
+            '-vf', f"scale_cuda=-2:{opts['resolution']}", # Escalamiento en GPU
+            '-c:v', 'h264_nvenc',           # Codificador de hardware NVIDIA
+            '-preset', gpu_preset,          # Preset optimizado para NVENC
+            '-rc', 'vbr',                   # Rate Control: Variable Bitrate
+            '-cq', opts['crf'],             # Usamos el valor de crf como Constant Quality
+            '-b:v', '0',                    # Obligatorio para que cq funcione
             '-acodec', 'aac',
             '-b:a', '64k',
             '-movflags', '+faststart',
@@ -214,7 +223,7 @@ async def run_compression_flow(client, chat_id, status_message):
         user_info['final_path'] = output_path
         compressed_size = os.path.getsize(output_path)
         reduction = ((original_size - compressed_size) / original_size) * 100 if original_size > 0 else 0
-        summary = (f"✅ **Compresión Exitosa**\n\n"
+        summary = (f"✅ **Compresión Exitosa (GPU T4)**\n\n"
                     f"**📏 Original:** `{format_size(original_size)}`\n"
                     f"**📂 Comprimido:** `{format_size(compressed_size)}` (`{reduction:.1f}%` menos)\n\n"
                     f"Ahora, ¿cómo quieres continuar?")
@@ -231,10 +240,7 @@ async def run_compression_flow(client, chat_id, status_message):
             os.remove(downloaded_path)
 
 async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, original_size, output_path):
-    """
-    🚀 ¡SOLUCIÓN ROBUSTA! 🚀
-    Lee la salida de FFmpeg de forma más fiable para garantizar que el progreso se muestre.
-    """
+    """Lee la salida de FFmpeg para mostrar progreso."""
     last_update = 0
     ffmpeg_data = {}
 
@@ -250,33 +256,26 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
 
         line = line.decode('utf-8').strip()
 
-        # Parsea cada línea para extraer la clave y el valor
         match = re.match(r'(\w+)=(.*)', line)
         if match:
             key, value = match.groups()
             ffmpeg_data[key] = value
 
-        # Actualiza el mensaje solo cuando se recibe un bloque de información completo
         if 'progress' in ffmpeg_data and ffmpeg_data['progress'] == 'continue':
-            # --- CAMBIO APLICADO AQUÍ PARA EVITAR ERROR VALUERROR ---
             raw_time = ffmpeg_data.get('out_time_us', '0')
             current_time_us = int(raw_time) if str(raw_time).isdigit() else 0
-            # -------------------------------------------------------
 
             if current_time_us == 0:
                 ffmpeg_data.clear()
                 continue
 
-            # 💡 Nueva lógica para evitar inundar la API
             current_time = time.time()
-            if current_time - last_update < 2.0:  # Intervalo de actualización de 2 segundos para mayor estabilidad
+            if current_time - last_update < 2.0:
                 ffmpeg_data.clear()
                 continue
             last_update = current_time
 
             current_time_sec = current_time_us / 1_000_000
-
-            # Usa 'speed' o calcula uno aproximado
             speed_str = ffmpeg_data.get('speed', '0x').replace('x', '')
             try:
                 speed_mult = float(speed_str)
@@ -289,7 +288,7 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
             current_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
 
             text = (
-                f"**COMPRIMIENDO...**\n"
+                f"**COMPRIMIENDO (GPU)...**\n"
                 f"`[{progress_bar}] {percentage:.1f}%`\n"
                 f"\n"
                 f"**Tamaño:** `{format_size(current_size)} / {format_size(original_size)}`\n"
@@ -436,7 +435,7 @@ async def callback_handler(client, cb: CallbackQuery):
 
     elif action == "action_compress":
         user_info['action'] = 'compress'
-        user_info['compression_options'] = {'crf': '22', 'resolution': '360', 'preset': 'veryfast'}
+        user_info['compression_options'] = {'crf': '24', 'resolution': '360', 'preset': 'veryfast'}
         await show_compression_options(client, chat_id, cb.message.id)
 
     elif action == "action_convert_only":
@@ -447,8 +446,8 @@ async def callback_handler(client, cb: CallbackQuery):
             await show_conversion_options(client, chat_id, cb.message.id, text="Descarga completa. ¿Cómo quieres continuar?")
 
     elif action == "compressopt_default":
-        user_info['compression_options'] = {'crf': '22', 'resolution': '360', 'preset': 'veryfast'}
-        await cb.message.edit("Iniciando compresión con opciones por defecto...")
+        user_info['compression_options'] = {'crf': '24', 'resolution': '360', 'preset': 'veryfast'}
+        await cb.message.edit("Iniciando compresión GPU por defecto...")
         await run_compression_flow(client, chat_id, cb.message)
 
     elif action == "compressopt_advanced":
@@ -463,7 +462,7 @@ async def callback_handler(client, cb: CallbackQuery):
             await show_advanced_menu(client, chat_id, cb.message.id, next_part, user_info['compression_options'])
 
     elif action == "start_advanced_compression":
-        await cb.message.edit("Opciones guardadas. Iniciando compresión...")
+        await cb.message.edit("Opciones guardadas. Iniciando compresión GPU...")
         await run_compression_flow(client, chat_id, cb.message)
 
     elif action == "convertopt_withthumb":
@@ -491,24 +490,25 @@ async def callback_handler(client, cb: CallbackQuery):
 # --- Funciones de Menús ---
 async def show_compression_options(client, chat_id, msg_id):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Usar Opciones Recomendadas", callback_data="compressopt_default")],
-        [InlineKeyboardButton("⚙️ Configurar Opciones Avanzadas", callback_data="compressopt_advanced")],
+        [InlineKeyboardButton("✅ Usar GPU (Recomendado)", callback_data="compressopt_default")],
+        [InlineKeyboardButton("⚙️ Opciones Avanzadas GPU", callback_data="compressopt_advanced")],
         [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]
     ])
     await update_message(client, chat_id, msg_id, "Elige cómo quieres comprimir:", reply_markup=keyboard)
 
 async def show_advanced_menu(client, chat_id, msg_id, part, opts=None):
+    # Nota: CRF en GPU se comporta como CQ (Constant Quality). 24-28 es buena calidad.
     menus = {
-        "crf": {"text": "1/3: Calidad (CRF)", "opts": [("18", "18"), ("20", "20"), ("22", "22"), ("25", "25"), ("28", "28")], "prefix": "adv_crf"},
+        "crf": {"text": "1/3: Calidad GPU (CQ)", "opts": [("Alta", "20"), ("Media", "24"), ("Económica", "28"), ("Baja", "32")], "prefix": "adv_crf"},
         "resolution": {"text": "2/3: Resolución", "opts": [("1080p", "1080"), ("720p", "720"), ("480p", "480"), ("360p", "360"), ("240p", "240")], "prefix": "adv_resolution"},
-        "preset": {"text": "3/3: Velocidad", "opts": [("Lenta", "slow"), ("Media", "medium"), ("Muy rápida", "veryfast"), ("Rápida", "fast"), ("Ultra rápida", "ultrafast")], "prefix": "adv_preset"}
+        "preset": {"text": "3/3: Velocidad GPU", "opts": [("Máxima", "ultrafast"), ("Equilibrada", "medium"), ("Calidad", "slow")], "prefix": "adv_preset"}
     }
     if part == "confirm":
-        text = (f"Confirmar opciones:\n"
-                f"- Calidad (CRF): `{opts.get('crf', 'N/A')}`\n"
+        text = (f"Confirmar opciones GPU:\n"
+                f"- Calidad (CQ): `{opts.get('crf', 'N/A')}`\n"
                 f"- Resolución: `{opts.get('resolution', 'N/A')}p`\n"
-                f"- Preset: `{opts.get('preset', 'N/A')}`")
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Iniciar Compresión", callback_data="start_advanced_compression")]])
+                f"- Preset GPU: `{opts.get('preset', 'N/A')}`")
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Iniciar Compresión GPU", callback_data="start_advanced_compression")]])
     else:
         info = menus[part]
         buttons = [InlineKeyboardButton(text, callback_data=f"{info['prefix']}_{val}") for text, val in info["opts"]]
