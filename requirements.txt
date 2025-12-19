@@ -3,6 +3,5 @@ tgcrypto
 ffmpeg-python
 nest-asyncio
 psutil
-tqdm
-aiofiles
 Flask
+numba
