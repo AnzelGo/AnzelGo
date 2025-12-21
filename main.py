@@ -104,7 +104,8 @@ async def progress_bar_handler(current, total, client, message, start_time, acti
 
     text = (
         f"**{action_text_clean}**\n"
-        f"`[{progress_bar}] {percentage:.1f}%`\n\n"
+        f"`[{progress_bar}] {percentage:.1f}%`\n"
+        f"\n"
         f"**Tamaño:** `{format_size(current)} / {format_size(total)}`\n"
         f"**Velocidad:** `{format_size(speed)}/s` | **ETA:** `{human_readable_time(eta)}`"
     )
@@ -116,9 +117,11 @@ async def download_video(client, chat_id, status_message):
     user_info = user_data.get(chat_id)
     if not user_info:
         return None
+
     user_info['state'] = 'downloading'
     start_time = time.time()
     original_message = await client.get_messages(chat_id, user_info['original_message_id'])
+
     try:
         video_path = await client.download_media(
             message=original_message,
@@ -126,14 +129,16 @@ async def download_video(client, chat_id, status_message):
             progress=progress_bar_handler,
             progress_args=(client, status_message, start_time, "📥 Descargando")
         )
+
         if not video_path or not os.path.exists(video_path):
             await update_message(client, chat_id, status_message.id, "❌ Error en la descarga.")
             return None
+
         user_info['download_path'] = video_path
         user_info['final_path'] = video_path
         return video_path
     except Exception as e:
-        logger.error(f"Error descarga: {e}", exc_info=True)
+        logger.error(f"Error al descargar para {chat_id}: {e}", exc_info=True)
         await update_message(client, chat_id, status_message.id, "❌ Error en la descarga.")
         return None
 
@@ -141,7 +146,8 @@ async def run_compression_flow(client, chat_id, status_message):
     downloaded_path = None
     try:
         downloaded_path = await download_video(client, chat_id, status_message)
-        if not downloaded_path: return
+        if not downloaded_path:
+            return
 
         user_info = user_data[chat_id]
         user_info['state'] = 'compressing'
@@ -152,7 +158,7 @@ async def run_compression_flow(client, chat_id, status_message):
         duration = float(probe.get('format', {}).get('duration', 0))
         original_size = os.path.getsize(downloaded_path)
 
-        # SELECCIÓN DE HARDWARE
+        # Lógica Híbrida CPU / GPU
         use_gpu = user_info.get('use_gpu', True)
         
         if use_gpu:
@@ -173,10 +179,10 @@ async def run_compression_flow(client, chat_id, status_message):
             ]
         else:
             await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (CPU)...")
-            # PARÁMETROS FIJOS PARA CPU SOLICITADOS
             cmd = [
                 'ffmpeg', '-i', downloaded_path,
                 '-vf', 'scale=-2:360',
+                '-r', '30',
                 '-c:v', 'libx264',
                 '-preset', 'veryfast',
                 '-crf', '22',
@@ -204,7 +210,7 @@ async def run_compression_flow(client, chat_id, status_message):
         await show_conversion_options(client, chat_id, status_message.id, text=summary)
 
     except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
+        logger.error(f"Error en compresión: {e}", exc_info=True)
         await update_message(client, chat_id, status_message.id, "❌ Error inesperado.")
     finally:
         if downloaded_path and os.path.exists(downloaded_path):
@@ -216,9 +222,14 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
     label = "GPU" if use_gpu else "CPU"
 
     while True:
+        if user_data.get(chat_id, {}).get('state') == 'cancelled':
+            if process.returncode is None: process.terminate()
+            return False
+
         line = await process.stdout.readline()
         if not line: break
         line = line.decode('utf-8').strip()
+
         match = re.match(r'(\w+)=(.*)', line)
         if match:
             key, value = match.groups()
@@ -229,68 +240,106 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
             current_time_us = int(raw_time) if str(raw_time).isdigit() else 0
             if current_time_us == 0: continue
 
-            if time.time() - last_update < 3: continue
-            last_update = time.time()
+            current_time = time.time()
+            if current_time - last_update < 3.0: continue
+            last_update = current_time
 
             current_time_sec = current_time_us / 1_000_000
-            speed = ffmpeg_data.get('speed', '0x')
+            speed_str = ffmpeg_data.get('speed', '0x').replace('x', '')
+            try: speed_mult = float(speed_str)
+            except: speed_mult = 0
+
             percentage = min((current_time_sec / duration) * 100, 100) if duration > 0 else 0
+            eta = (duration - current_time_sec) / speed_mult if speed_mult > 0 else 0
             progress_bar = get_progress_bar(percentage)
             current_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
 
             text = (
                 f"**COMPRIMIENDO ({label})...**\n"
-                f"`[{progress_bar}] {percentage:.1f}%`\n\n"
+                f"`[{progress_bar}] {percentage:.1f}%`\n"
+                f"\n"
                 f"**Tamaño:** `{format_size(current_size)} / {format_size(original_size)}`\n"
-                f"**Velocidad:** `{speed}`"
+                f"**Velocidad:** `{speed_str}x` | **ETA:** `{human_readable_time(eta)}`"
             )
             await update_message(client, chat_id, msg_id, text)
+            ffmpeg_data.clear()
+
     await process.wait()
     return process.returncode == 0
 
 async def upload_final_video(client, chat_id):
     user_info = user_data.get(chat_id)
     if not user_info or not user_info.get('final_path'): return
+
     final_path = user_info['final_path']
     status_id = user_info['status_message_id']
     status_message = await client.get_messages(chat_id, status_id)
+
     final_filename = user_info.get('new_name') or os.path.basename(user_info['video_file_name'])
-    if user_info.get('new_name') and not final_filename.endswith(".mp4"): final_filename += ".mp4"
+    if not final_filename.endswith(".mp4"):
+        final_filename += ".mp4"
 
     try:
+        probe = ffmpeg.probe(final_path)
+        stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), {})
+        duration = int(float(stream.get('duration', 0)))
+        width = int(stream.get('width', 0))
+        height = int(stream.get('height', 0))
+
+        start_time = time.time()
         await update_message(client, chat_id, status_id, "⬆️ SUBIENDO...")
+
         if user_info.get('send_as_file'):
-            await client.send_document(chat_id, final_path, thumb=user_info.get('thumbnail_path'), file_name=final_filename, progress=progress_bar_handler, progress_args=(client, status_message, time.time(), "⬆️ Subiendo"))
+            await client.send_document(
+                chat_id=chat_id, document=final_path, thumb=user_info.get('thumbnail_path'),
+                file_name=final_filename, caption=f"`{final_filename}`",
+                progress=progress_bar_handler, progress_args=(client, status_message, start_time, "⬆️ Subiendo")
+            )
         else:
-            await client.send_video(chat_id, final_path, thumb=user_info.get('thumbnail_path'), caption=f"`{final_filename}`", supports_streaming=True, progress=progress_bar_handler, progress_args=(client, status_message, time.time(), "⬆️ Subiendo"))
+            await client.send_video(
+                chat_id=chat_id, video=final_path, caption=f"`{final_filename}`",
+                thumb=user_info.get('thumbnail_path'), duration=duration, width=width, height=height,
+                supports_streaming=True, progress=progress_bar_handler,
+                progress_args=(client, status_message, start_time, "⬆️ Subiendo")
+            )
+
         await status_message.delete()
+        await client.send_message(chat_id, "✅ ¡Proceso completado!")
     except Exception as e:
-        logger.error(f"Error subida: {e}")
+        logger.error(f"Error al subir: {e}", exc_info=True)
+        await update_message(client, chat_id, status_id, f"❌ Error durante la subida.")
     finally:
         clean_up(chat_id)
 
-# --- Handlers ---
+# --- Handlers de Mensajes y Callbacks ---
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     clean_up(message.chat.id)
-    # ELEGIR HARDWARE AL INICIO
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Usar GPU (Kaggle)", callback_data="hw_gpu")],
-        [InlineKeyboardButton("🍃 Usar CPU (Gratis)", callback_data="hw_cpu")]
+        [InlineKeyboardButton("🚀 Usar GPU (NVIDIA)", callback_data="hw_gpu")],
+        [InlineKeyboardButton("🍃 Usar CPU (Estándar)", callback_data="hw_cpu")]
     ])
-    await message.reply("¡Hola! Selecciona el hardware a utilizar antes de enviar videos:", reply_markup=keyboard)
+    await message.reply(
+        "¡Hola! 👋 Soy tu bot para procesar videos.\n\n"
+        "Primero, selecciona el hardware que deseas usar:", reply_markup=keyboard
+    )
 
 @app.on_message(filters.video & filters.private)
 async def video_handler(client, message: Message):
     chat_id = message.chat.id
     if not user_data.get(chat_id):
-        await message.reply("⚠️ Usa /start primero para elegir CPU o GPU.")
+        await message.reply("⚠️ Por favor, usa /start primero para elegir el modo de trabajo.")
         return
-    
+
     user_info = user_data[chat_id]
-    user_info.update({'original_message_id': message.id, 'video_file_name': message.video.file_name or "video.mp4", 'last_update_time': 0})
-    
+    user_info.update({
+        'original_message_id': message.id,
+        'video_file_name': message.video.file_name or f"video_{message.video.file_id}.mp4",
+        'last_update_time': 0,
+        'state': 'awaiting_action'
+    })
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🗜️ Comprimir Video", callback_data="action_compress")],
         [InlineKeyboardButton("⚙️ Solo Enviar/Convertir", callback_data="action_convert_only")],
@@ -302,28 +351,38 @@ async def video_handler(client, message: Message):
 async def thumbnail_handler(client, message: Message):
     chat_id = message.chat.id
     user_info = user_data.get(chat_id)
-    if user_info and user_info.get('state') == 'waiting_for_thumbnail':
-        user_info['thumbnail_path'] = await client.download_media(message, file_name=os.path.join(DOWNLOAD_DIR, f"thumb_{chat_id}.jpg"))
-        await show_rename_options(client, chat_id, user_info['status_message_id'], "Miniatura guardada. ¿Renombrar video?")
+    if not user_info or user_info.get('state') != 'waiting_for_thumbnail': return
+
+    status_id = user_info['status_message_id']
+    await update_message(client, chat_id, status_id, "🖼️ Descargando miniatura...")
+    try:
+        thumb_path = await client.download_media(message=message, file_name=os.path.join(DOWNLOAD_DIR, f"thumb_{chat_id}.jpg"))
+        user_info['thumbnail_path'] = thumb_path
+        await show_rename_options(client, chat_id, status_id, "Miniatura guardada. ¿Quieres renombrar el video?")
+    except Exception as e:
+        await update_message(client, chat_id, status_id, "❌ Error con la miniatura.")
 
 @app.on_message(filters.text & filters.private)
 async def rename_handler(client, message: Message):
     chat_id = message.chat.id
     user_info = user_data.get(chat_id)
-    if user_info and user_info.get('state') == 'waiting_for_new_name':
-        user_info['new_name'] = message.text.strip()
-        await message.delete()
-        await upload_final_video(client, chat_id)
+    if not user_info or user_info.get('state') != 'waiting_for_new_name': return
+
+    user_info['new_name'] = message.text.strip()
+    await message.delete()
+    user_info['state'] = 'uploading'
+    await update_message(client, chat_id, user_info['status_message_id'], "✅ Nombre guardado. Subiendo...")
+    await upload_final_video(client, chat_id)
 
 @app.on_callback_query()
 async def callback_handler(client, cb: CallbackQuery):
     chat_id = cb.message.chat.id
     data = cb.data
-    
+
     if data.startswith("hw_"):
         user_data[chat_id] = {'use_gpu': (data == "hw_gpu")}
-        label = "GPU 🚀" if data == "hw_gpu" else "CPU 🍃"
-        await cb.message.edit(f"✅ Modo **{label}** seleccionado. Envíame un video.")
+        mode = "GPU 🚀" if data == "hw_gpu" else "CPU 🍃"
+        await cb.message.edit(f"✅ Modo **{mode}** seleccionado. Envíame un video.")
         return
 
     user_info = user_data.get(chat_id)
@@ -331,13 +390,26 @@ async def callback_handler(client, cb: CallbackQuery):
     user_info['status_message_id'] = cb.message.id
     await cb.answer()
 
-    if data == "action_compress":
+    if data == "cancel":
+        user_info['state'] = 'cancelled'
+        await cb.message.edit("Operación cancelada.")
+        clean_up(chat_id)
+
+    elif data == "action_compress":
         if user_info.get('use_gpu'):
+            user_info['compression_options'] = {'crf': '24', 'resolution': '360', 'preset': 'veryfast'}
             await show_compression_options(client, chat_id, cb.message.id)
         else:
+            # CPU usa valores fijos directos
             user_info['compression_options'] = {'crf': '22', 'resolution': '360', 'preset': 'veryfast'}
-            await cb.message.edit("Iniciando compresión CPU (360p fija)...")
+            await cb.message.edit("Iniciando flujo CPU (360p)...")
             await run_compression_flow(client, chat_id, cb.message)
+
+    elif data == "action_convert_only":
+        await cb.message.edit("Iniciando descarga...")
+        downloaded_path = await download_video(client, chat_id, cb.message)
+        if downloaded_path:
+            await show_conversion_options(client, chat_id, cb.message.id, text="Descarga completa. ¿Cómo quieres continuar?")
 
     elif data == "compressopt_default":
         user_info['compression_options'] = {'crf': '24', 'resolution': '360', 'preset': 'veryfast'}
@@ -349,65 +421,83 @@ async def callback_handler(client, cb: CallbackQuery):
     elif data.startswith("adv_"):
         part, value = data.split("_")[1], data.split("_")[2]
         user_info.setdefault('compression_options', {})[part] = value
-        next_part_map = {"crf": "resolution", "resolution": "preset", "preset": "confirm"}
-        next_part = next_part_map.get(part)
+        next_part = {"crf": "resolution", "resolution": "preset", "preset": "confirm"}.get(part)
         if next_part: await show_advanced_menu(client, chat_id, cb.message.id, next_part, user_info['compression_options'])
 
     elif data == "start_advanced_compression":
         await run_compression_flow(client, chat_id, cb.message)
 
-    elif data == "action_convert_only":
-        await download_video(client, chat_id, cb.message)
-        await show_conversion_options(client, chat_id, cb.message.id)
-
     elif data == "convertopt_withthumb":
         user_info['state'] = 'waiting_for_thumbnail'
-        await cb.message.edit("Envía la imagen para la miniatura.")
+        await cb.message.edit("Por favor, envía la imagen para la miniatura.")
 
-    elif data == "convertopt_nothumb": await show_rename_options(client, chat_id, cb.message.id)
-    elif data == "convertopt_asfile": user_info['send_as_file'] = True; await show_rename_options(client, chat_id, cb.message.id)
+    elif data == "convertopt_nothumb":
+        user_info['thumbnail_path'] = None
+        await show_rename_options(client, chat_id, cb.message.id)
+
+    elif data == "convertopt_asfile":
+        user_info['send_as_file'] = True
+        await show_rename_options(client, chat_id, cb.message.id)
+
     elif data == "renameopt_yes":
         user_info['state'] = 'waiting_for_new_name'
-        await cb.message.edit("Envía el nuevo nombre.")
-    elif data == "renameopt_no": await upload_final_video(client, chat_id)
-    elif data == "cancel": clean_up(chat_id); await cb.message.edit("Cancelado.")
+        await cb.message.edit("Envíame el nuevo nombre (sin extensión).")
 
-# --- Menús ---
+    elif data == "renameopt_no":
+        user_info['new_name'] = None
+        user_info['state'] = 'uploading'
+        await upload_final_video(client, chat_id)
+
+# --- Funciones de Menús ---
+
 async def show_compression_options(client, chat_id, msg_id):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ GPU Defecto", callback_data="compressopt_default")],
-        [InlineKeyboardButton("⚙️ GPU Avanzado", callback_data="compressopt_advanced")]
+        [InlineKeyboardButton("✅ Usar GPU (Recomendado)", callback_data="compressopt_default")],
+        [InlineKeyboardButton("⚙️ Opciones Avanzadas GPU", callback_data="compressopt_advanced")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]
     ])
-    await update_message(client, chat_id, msg_id, "Opciones GPU:", reply_markup=keyboard)
+    await update_message(client, chat_id, msg_id, "Elige cómo quieres comprimir:", reply_markup=keyboard)
 
 async def show_advanced_menu(client, chat_id, msg_id, part, opts=None):
     menus = {
-        "crf": {"text": "Calidad GPU (CQ)", "opts": [("Alta", "20"), ("Media", "24"), ("Baja", "28")], "prefix": "adv_crf"},
-        "resolution": {"text": "Resolución", "opts": [("720p", "720"), ("480p", "480"), ("360p", "360")], "prefix": "adv_resolution"},
-        "preset": {"text": "Velocidad GPU", "opts": [("Rápido", "ultrafast"), ("Medio", "medium")], "prefix": "adv_preset"}
+        "crf": {"text": "1/3: Calidad GPU (CQ)", "opts": [("Alta", "20"), ("Media", "24"), ("Económica", "28"), ("Baja", "32")], "prefix": "adv_crf"},
+        "resolution": {"text": "2/3: Resolución", "opts": [("1080p", "1080"), ("720p", "720"), ("480p", "480"), ("360p", "360"), ("240p", "240")], "prefix": "adv_resolution"},
+        "preset": {"text": "3/3: Velocidad GPU", "opts": [("Máxima", "ultrafast"), ("Equilibrada", "medium"), ("Calidad", "slow")], "prefix": "adv_preset"}
     }
     if part == "confirm":
-        text = f"Confirmar: {opts.get('crf')} CQ | {opts.get('resolution')}p"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Iniciar", callback_data="start_advanced_compression")]])
+        text = (f"Confirmar opciones GPU:\n- CQ: `{opts.get('crf')}`\n- Resolución: `{opts.get('resolution')}p`\n- Preset: `{opts.get('preset')}`")
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Iniciar Compresión GPU", callback_data="start_advanced_compression")]])
     else:
         info = menus[part]
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(t, callback_data=f"{info['prefix']}_{v}") for t, v in info["opts"]]])
+        buttons = [InlineKeyboardButton(t, callback_data=f"{info['prefix']}_{v}") for t, v in info["opts"]]
+        keyboard = InlineKeyboardMarkup([buttons])
         text = info["text"]
     await update_message(client, chat_id, msg_id, text, reply_markup=keyboard)
 
-async def show_conversion_options(client, chat_id, msg_id, text="¿Cómo enviar?"):
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🖼️ Miniatura", callback_data="convertopt_withthumb")], [InlineKeyboardButton("🚫 Sin Mini", callback_data="convertopt_nothumb")], [InlineKeyboardButton("📂 Archivo", callback_data="convertopt_asfile")]])
-    await update_message(client, chat_id, msg_id, text, reply_markup=kb)
+async def show_conversion_options(client, chat_id, msg_id, text="¿Cómo quieres enviar el video?"):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🖼️ Con Miniatura", callback_data="convertopt_withthumb")],
+        [InlineKeyboardButton("🚫 Sin Miniatura", callback_data="convertopt_nothumb")],
+        [InlineKeyboardButton("📂 Enviar como Archivo", callback_data="convertopt_asfile")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]
+    ])
+    await update_message(client, chat_id, msg_id, text, reply_markup=keyboard)
 
-async def show_rename_options(client, chat_id, msg_id, text="¿Renombrar?"):
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✏️ Sí", callback_data="renameopt_yes")], [InlineKeyboardButton("➡️ No", callback_data="renameopt_no")]])
-    await update_message(client, chat_id, msg_id, text, reply_markup=kb)
+async def show_rename_options(client, chat_id, msg_id, text="¿Quieres renombrar el archivo?"):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Sí, renombrar", callback_data="renameopt_yes")],
+        [InlineKeyboardButton("➡️ No, usar original", callback_data="renameopt_no")]
+    ])
+    await update_message(client, chat_id, msg_id, text, reply_markup=keyboard)
 
 def clean_up(chat_id):
-    info = user_data.pop(chat_id, None)
-    if info:
-        for k in ['download_path', 'thumbnail_path', 'final_path']:
-            if info.get(k) and os.path.exists(info[k]): os.remove(info[k])
+    user_info = user_data.pop(chat_id, None)
+    if not user_info: return
+    for key in ['download_path', 'thumbnail_path', 'final_path']:
+        path = user_info.get(key)
+        if path and os.path.exists(path):
+            try: os.remove(path)
+            except: pass
 
 async def start_bot_and_server():
     Thread(target=run_server).start()
