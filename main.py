@@ -31,7 +31,7 @@ def run_server():
     app_flask.run(host='0.0.0.0', port=port)
 
 # =======================================================
-# LÓGICA DE TU BOT (HIBRIDO CPU/GPU)
+# LÓGICA DE TU BOT
 # =======================================================
 
 nest_asyncio.apply()
@@ -51,7 +51,7 @@ user_data = {}
 
 app = Client("video_processor_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- Función de detección de Hardware ---
+# --- Funciones de Hardware ---
 def is_gpu_available():
     try:
         import subprocess
@@ -81,6 +81,7 @@ async def update_message(client, chat_id, message_id, text, reply_markup=None):
     except MessageNotModified:
         pass
     except FloodWait as e:
+        logger.warning(f"FloodWait de {e.value}s. Esperando.")
         await asyncio.sleep(e.value)
         await update_message(client, chat_id, message_id, text, reply_markup)
     except Exception as e:
@@ -88,7 +89,8 @@ async def update_message(client, chat_id, message_id, text, reply_markup=None):
 
 def get_progress_bar(percentage):
     completed_blocks = int(percentage // 10)
-    if percentage >= 100: return '■' * 10
+    if percentage >= 100:
+        return '■' * 10
     return '■' * completed_blocks + '□' * (10 - completed_blocks)
 
 async def progress_bar_handler(current, total, client, message, start_time, action_text):
@@ -107,19 +109,22 @@ async def progress_bar_handler(current, total, client, message, start_time, acti
     eta = (total - current) / speed if speed > 0 else 0
 
     progress_bar = get_progress_bar(percentage)
+    action_text_clean = action_text.replace('📥 Descargando', 'DESCARGANDO...').replace('⬆️ Subiendo', 'SUBIENDO...').replace('🗜️ Comprimiendo...', 'COMPRIMIENDO...')
+
     text = (
-        f"**{action_text}**\n"
+        f"**{action_text_clean}**\n"
         f"`[{progress_bar}] {percentage:.1f}%`\n\n"
         f"**Tamaño:** `{format_size(current)} / {format_size(total)}`\n"
         f"**Velocidad:** `{format_size(speed)}/s` | **ETA:** `{human_readable_time(eta)}`"
     )
     await update_message(client, chat_id, message.id, text)
 
-# --- Lógica de Procesamiento ---
+# --- Lógica de Procesamiento de Video ---
 
 async def download_video(client, chat_id, status_message):
     user_info = user_data.get(chat_id)
-    if not user_info: return None
+    if not user_info:
+        return None
     user_info['state'] = 'downloading'
     start_time = time.time()
     original_message = await client.get_messages(chat_id, user_info['original_message_id'])
@@ -130,11 +135,15 @@ async def download_video(client, chat_id, status_message):
             progress=progress_bar_handler,
             progress_args=(client, status_message, start_time, "📥 Descargando")
         )
+        if not video_path or not os.path.exists(video_path):
+            await update_message(client, chat_id, status_message.id, "❌ Error en la descarga.")
+            return None
         user_info['download_path'] = video_path
         user_info['final_path'] = video_path
         return video_path
     except Exception as e:
-        logger.error(f"Error descarga: {e}")
+        logger.error(f"Error descarga: {e}", exc_info=True)
+        await update_message(client, chat_id, status_message.id, "❌ Error en la descarga.")
         return None
 
 async def run_compression_flow(client, chat_id, status_message):
@@ -147,35 +156,50 @@ async def run_compression_flow(client, chat_id, status_message):
         user_info['state'] = 'compressing'
         opts = user_info['compression_options']
         output_path = os.path.join(DOWNLOAD_DIR, f"compressed_{chat_id}.mp4")
-        
+
         probe = ffmpeg.probe(downloaded_path)
         duration = float(probe.get('format', {}).get('duration', 0))
         original_size = os.path.getsize(downloaded_path)
 
-        # DETECCIÓN DE MODO (CPU o GPU)
-        use_gpu = user_info.get('use_gpu', False) and is_gpu_available()
+        # Lógica Binaria CPU / GPU
+        use_gpu = user_info.get('use_gpu', False)
         
         if use_gpu:
             modo_txt = "GPU (NVENC)"
             preset_map = {'ultrafast': 'p1', 'veryfast': 'p2', 'fast': 'p3', 'medium': 'p4', 'slow': 'p6'}
+            gpu_preset = preset_map.get(opts['preset'], 'p4')
             cmd = [
-                'ffmpeg', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-i', downloaded_path,
-                '-vf', f"scale_cuda=-2:{opts['resolution']}", '-c:v', 'h264_nvenc',
-                '-preset', preset_map.get(opts['preset'], 'p4'), '-rc', 'vbr', '-cq', opts['crf'],
-                '-b:v', '0', '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', output_path
+                'ffmpeg', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda',
+                '-i', downloaded_path,
+                '-vf', f"scale_cuda=-2:{opts['resolution']}",
+                '-c:v', 'h264_nvenc',
+                '-preset', gpu_preset,
+                '-rc', 'vbr',
+                '-cq', opts['crf'],
+                '-b:v', '0',
+                '-acodec', 'aac', '-b:a', '64k',
+                '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
         else:
-            modo_txt = "CPU (x264)"
-            # Parámetros solicitados: scale -2:360, veryfast, crf 22
+            modo_txt = "CPU (libx264)"
             cmd = [
                 'ffmpeg', '-i', downloaded_path,
-                '-vf', f"scale=-2:{opts['resolution']}", '-c:v', 'libx264',
-                '-preset', 'veryfast', '-crf', '22', 
-                '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', output_path
+                '-vf', 'scale=-2:360',
+                '-c:v', 'libx264',
+                '-preset', 'veryfast',
+                '-crf', '22',
+                '-acodec', 'aac', '-b:a', '64k',
+                '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
 
         await update_message(client, chat_id, status_message.id, f"🗜️ COMPRIMIENDO ({modo_txt})...")
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
         success = await track_ffmpeg_progress(client, chat_id, status_message.id, process, duration, original_size, output_path, modo_txt)
 
         if not success:
@@ -184,7 +208,7 @@ async def run_compression_flow(client, chat_id, status_message):
 
         user_info['final_path'] = output_path
         compressed_size = os.path.getsize(output_path)
-        reduction = ((original_size - compressed_size) / original_size) * 100
+        reduction = ((original_size - compressed_size) / original_size) * 100 if original_size > 0 else 0
         summary = (f"✅ **Compresión Exitosa ({modo_txt})**\n\n"
                     f"**📏 Original:** `{format_size(original_size)}`\n"
                     f"**📂 Comprimido:** `{format_size(compressed_size)}` (`{reduction:.1f}%` menos)\n\n"
@@ -192,9 +216,11 @@ async def run_compression_flow(client, chat_id, status_message):
         await show_conversion_options(client, chat_id, status_message.id, text=summary)
 
     except Exception as e:
-        logger.error(f"Error compresión: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
+        await update_message(client, chat_id, status_message.id, "❌ Error inesperado.")
     finally:
-        if downloaded_path and os.path.exists(downloaded_path): os.remove(downloaded_path)
+        if downloaded_path and os.path.exists(downloaded_path):
+            os.remove(downloaded_path)
 
 async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, original_size, output_path, modo_txt):
     last_update = 0
@@ -207,15 +233,18 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
         if match:
             key, value = match.groups()
             ffmpeg_data[key] = value
+
         if 'progress' in ffmpeg_data and ffmpeg_data['progress'] == 'continue':
             current_time_us = int(ffmpeg_data.get('out_time_us', 0))
             if time.time() - last_update < 3: continue
             last_update = time.time()
+
             current_time_sec = current_time_us / 1_000_000
             speed = ffmpeg_data.get('speed', '0x')
             percentage = min((current_time_sec / duration) * 100, 100) if duration > 0 else 0
             progress_bar = get_progress_bar(percentage)
             current_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+
             text = (
                 f"**COMPRIMIENDO ({modo_txt})...**\n"
                 f"`[{progress_bar}] {percentage:.1f}%`\n\n"
@@ -228,111 +257,146 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
 
 async def upload_final_video(client, chat_id):
     user_info = user_data.get(chat_id)
+    if not user_info or not user_info.get('final_path'): return
     final_path = user_info['final_path']
     status_id = user_info['status_message_id']
     status_message = await client.get_messages(chat_id, status_id)
-    final_filename = user_info.get('new_name') or user_info['video_file_name']
+    final_filename = user_info.get('new_name') or os.path.basename(user_info['video_file_name'])
     if not final_filename.endswith(".mp4"): final_filename += ".mp4"
+
     try:
-        probe = ffmpeg.probe(final_path)
-        stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), {})
         await update_message(client, chat_id, status_id, "⬆️ SUBIENDO...")
         if user_info.get('send_as_file'):
             await client.send_document(chat_id, final_path, file_name=final_filename, progress=progress_bar_handler, progress_args=(client, status_message, time.time(), "⬆️ Subiendo"))
         else:
             await client.send_video(chat_id, final_path, caption=f"`{final_filename}`", supports_streaming=True, progress=progress_bar_handler, progress_args=(client, status_message, time.time(), "⬆️ Subiendo"))
         await status_message.delete()
-    except Exception as e: logger.error(f"Error subida: {e}")
-    finally: clean_up(chat_id)
+    except Exception as e:
+        logger.error(f"Error subida: {e}")
+    finally:
+        clean_up(chat_id)
 
 # --- Handlers ---
 
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     clean_up(message.chat.id)
-    await message.reply("¡Hola! Envíame un video para empezar.")
-
-@app.on_message(filters.video & filters.private)
-async def video_handler(client, message: Message):
-    chat_id = message.chat.id
-    user_data[chat_id] = {
-        'state': 'awaiting_action',
-        'original_message_id': message.id,
-        'video_file_name': message.video.file_name or f"video_{message.video.file_id}.mp4",
-        'last_update_time': 0,
-    }
-    gpu_dispo = "✅ GPU Disponible" if is_gpu_available() else "🍃 Solo CPU (Ahorro)"
+    # BOTONES DE INICIO PARA ELEGIR HARDWARE
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"🚀 Usar GPU ({gpu_dispo})", callback_data="action_gpu")],
-        [InlineKeyboardButton("🍃 Usar CPU (Ahorro Gratis)", callback_data="action_cpu")],
-        [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]
+        [InlineKeyboardButton("💎 Modo GPU (Kaggle Hours)", callback_data="hw_gpu")],
+        [InlineKeyboardButton("🍃 Modo CPU (Gratis 24/7)", callback_data="hw_cpu")]
     ])
-    await message.reply_text(f"Video recibido.\nEstado: **{gpu_dispo}**\n\n¿Qué modo quieres usar?", reply_markup=keyboard, quote=True)
+    await message.reply("¡Hola! Selecciona el hardware que usarás en Kaggle antes de enviar videos:", reply_markup=keyboard)
 
 @app.on_callback_query()
 async def callback_handler(client, cb: CallbackQuery):
     chat_id = cb.message.chat.id
+    data = cb.data
+    
+    if data == "hw_gpu":
+        user_data[chat_id] = {'use_gpu': True}
+        await cb.message.edit("✅ **Modo GPU configurado.** Ahora envíame un video.")
+    elif data == "hw_cpu":
+        user_data[chat_id] = {'use_gpu': False}
+        await cb.message.edit("✅ **Modo CPU (Gratis) configurado.** Ahora envíame un video.")
+    
     user_info = user_data.get(chat_id)
     if not user_info: return
-    action = cb.data
     user_info['status_message_id'] = cb.message.id
-    await cb.answer()
 
-    if action == "cancel":
-        clean_up(chat_id)
-        await cb.message.edit("Operación cancelada.")
-    
-    elif action == "action_gpu":
-        if not is_gpu_available():
-            await cb.answer("⚠️ GPU no detectada. Cambia a modo CPU.", show_alert=True)
-            return
-        user_info['use_gpu'] = True
+    if data == "action_compress":
+        if user_info.get('use_gpu'):
+            await show_compression_options(client, chat_id, cb.message.id)
+        else:
+            user_info['compression_options'] = {'crf': '22', 'resolution': '360', 'preset': 'veryfast'}
+            await cb.message.edit("Iniciando compresión CPU (360p)...")
+            await run_compression_flow(client, chat_id, cb.message)
+
+    elif data == "compressopt_default":
         user_info['compression_options'] = {'crf': '24', 'resolution': '360', 'preset': 'veryfast'}
-        await cb.message.edit("Modo GPU activado. Iniciando...")
         await run_compression_flow(client, chat_id, cb.message)
 
-    elif action == "action_cpu":
-        user_info['use_gpu'] = False
-        user_info['compression_options'] = {'crf': '22', 'resolution': '360', 'preset': 'veryfast'}
-        await cb.message.edit("Modo CPU activado. Iniciando...")
+    elif data == "compressopt_advanced":
+        await show_advanced_menu(client, chat_id, cb.message.id, "crf")
+
+    elif data.startswith("adv_"):
+        part, value = data.split("_")[1], data.split("_")[2]
+        user_info.setdefault('compression_options', {})[part] = value
+        next_part_map = {"crf": "resolution", "resolution": "preset", "preset": "confirm"}
+        next_part = next_part_map.get(part)
+        if next_part: await show_advanced_menu(client, chat_id, cb.message.id, next_part, user_info['compression_options'])
+
+    elif data == "start_advanced_compression":
         await run_compression_flow(client, chat_id, cb.message)
 
-    elif action.startswith("convertopt_"):
-        if action == "convertopt_nothumb": await show_rename_options(client, chat_id, cb.message.id)
-        elif action == "convertopt_asfile": user_info['send_as_file'] = True; await show_rename_options(client, chat_id, cb.message.id)
+    elif data == "action_convert_only":
+        await cb.message.edit("Descargando...")
+        path = await download_video(client, chat_id, cb.message)
+        if path: await show_conversion_options(client, chat_id, cb.message.id)
 
-    elif action == "renameopt_no":
-        user_info['state'] = 'uploading'
-        await upload_final_video(client, chat_id)
+    elif data == "convertopt_nothumb": await show_rename_options(client, chat_id, cb.message.id)
+    elif data == "convertopt_asfile": user_info['send_as_file'] = True; await show_rename_options(client, chat_id, cb.message.id)
+    elif data == "renameopt_no": await upload_final_video(client, chat_id)
+    elif data == "cancel": clean_up(chat_id); await cb.message.edit("Cancelado.")
 
-# --- Menús Originales ---
-async def show_conversion_options(client, chat_id, msg_id, text):
+@app.on_message(filters.video & filters.private)
+async def video_handler(client, message: Message):
+    chat_id = message.chat.id
+    if not user_data.get(chat_id):
+        await message.reply("⚠️ Primero usa /start para elegir CPU o GPU.")
+        return
+    
+    user_info = user_data[chat_id]
+    user_info.update({'original_message_id': message.id, 'video_file_name': message.video.file_name or "video.mp4", 'last_update_time': 0})
+
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚫 Sin Miniatura", callback_data="convertopt_nothumb")],
-        [InlineKeyboardButton("📂 Como Archivo", callback_data="convertopt_asfile")],
+        [InlineKeyboardButton("🗜️ Comprimir Video", callback_data="action_compress")],
+        [InlineKeyboardButton("⚙️ Solo Enviar/Convertir", callback_data="action_convert_only")],
         [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]
     ])
+    await message.reply_text("¿Qué quieres hacer?", reply_markup=keyboard, quote=True)
+
+# --- Menús Originales ---
+async def show_compression_options(client, chat_id, msg_id):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Usar GPU Defecto", callback_data="compressopt_default")],
+        [InlineKeyboardButton("⚙️ Opciones Avanzadas GPU", callback_data="compressopt_advanced")]
+    ])
+    await update_message(client, chat_id, msg_id, "Configuración GPU:", reply_markup=keyboard)
+
+async def show_advanced_menu(client, chat_id, msg_id, part, opts=None):
+    menus = {
+        "crf": {"text": "1/3: Calidad GPU (CQ)", "opts": [("Alta", "20"), ("Media", "24"), ("Baja", "28")], "prefix": "adv_crf"},
+        "resolution": {"text": "2/3: Resolución", "opts": [("720p", "720"), ("480p", "480"), ("360p", "360")], "prefix": "adv_resolution"},
+        "preset": {"text": "3/3: Velocidad GPU", "opts": [("Máxima", "ultrafast"), ("Equilibrada", "medium")], "prefix": "adv_preset"}
+    }
+    if part == "confirm":
+        text = f"Confirmar GPU: {opts.get('crf')} CRF | {opts.get('resolution')}p"
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Iniciar", callback_data="start_advanced_compression")]])
+    else:
+        info = menus[part]
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(t, callback_data=f"{info['prefix']}_{v}") for t, v in info["opts"]]])
+        text = info["text"]
     await update_message(client, chat_id, msg_id, text, reply_markup=keyboard)
 
+async def show_conversion_options(client, chat_id, msg_id, text="¿Cómo enviar?"):
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Sin Miniatura", callback_data="convertopt_nothumb")], [InlineKeyboardButton("📂 Archivo", callback_data="convertopt_asfile")]])
+    await update_message(client, chat_id, msg_id, text, reply_markup=kb)
+
 async def show_rename_options(client, chat_id, msg_id):
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("➡️ Usar original", callback_data="renameopt_no")]])
-    await update_message(client, chat_id, msg_id, "¿Quieres usar el nombre original?", reply_markup=keyboard)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("➡️ Usar original", callback_data="renameopt_no")]])
+    await update_message(client, chat_id, msg_id, "¿Renombrar?", reply_markup=kb)
 
 def clean_up(chat_id):
-    user_info = user_data.pop(chat_id, None)
-    if not user_info: return
-    for key in ['download_path', 'final_path']:
-        path = user_info.get(key)
-        if path and os.path.exists(path):
-            try: os.remove(path)
-            except: pass
+    info = user_data.pop(chat_id, None)
+    if info:
+        for k in ['download_path', 'final_path']:
+            if info.get(k) and os.path.exists(info[k]): os.remove(info[k])
 
 async def start_bot_and_server():
     Thread(target=run_server).start()
     await app.start()
-    logger.info("Bot Híbrido Iniciado.")
     await asyncio.Future()
 
 if __name__ == "__main__":
-    try: asyncio.run(start_bot_and_server())
-    except: pass
+    asyncio.run(start_bot_and_server())
