@@ -37,16 +37,13 @@ def run_server():
 def is_gpu_available():
     """Detecta si hay una GPU NVIDIA disponible mediante nvidia-smi."""
     try:
-        subprocess.check_output(['nvidia-smi'])
+        subprocess.check_output(['nvidia-smi'], stderr=subprocess.STDOUT)
         return True
-    except (Exception, FileNotFoundError):
+    except:
         return False
 
-# Detectar globalmente al inicio
-GPU_MODE = is_gpu_available()
-
 # =======================================================
-# LÓGICA DE TU BOT (FUSIONADA)
+# LÓGICA DE TU BOT (FUSIONADA Y DIFERENCIADA)
 # =======================================================
 nest_asyncio.apply()
 
@@ -87,8 +84,6 @@ async def update_message(client, chat_id, message_id, text, reply_markup=None):
     except FloodWait as e:
         await asyncio.sleep(e.value)
         await update_message(client, chat_id, message_id, text, reply_markup)
-    except Exception as e:
-        logger.error(f"Error al actualizar mensaje: {e}")
 
 def get_progress_bar(percentage):
     completed_blocks = int(percentage // 10)
@@ -135,7 +130,7 @@ async def download_video(client, chat_id, status_message):
             progress=progress_bar_handler,
             progress_args=(client, status_message, start_time, "📥 Descargando")
         )
-        if not video_path or not os.path.exists(video_path): return None
+        if not video_path: return None
         user_info['download_path'] = video_path
         user_info['final_path'] = video_path
         return video_path
@@ -158,7 +153,6 @@ async def run_compression_flow(client, chat_id, status_message):
         duration = float(probe.get('format', {}).get('duration', 0))
         original_size = os.path.getsize(downloaded_path)
 
-        # CAMALEÓN: Estética y Comando según modo
         if is_gpu_available():
             await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (GPU)...")
             preset_map = {'ultrafast': 'p1', 'veryfast': 'p2', 'fast': 'p3', 'medium': 'p4', 'slow': 'p6'}
@@ -172,7 +166,7 @@ async def run_compression_flow(client, chat_id, status_message):
                 '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart',
                 '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
-            engine_label = "GPU T4"
+            engine_text = "GPU T4"
         else:
             await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO...")
             cmd = [
@@ -182,7 +176,7 @@ async def run_compression_flow(client, chat_id, status_message):
                 '-vcodec', 'libx264', '-acodec', 'aac', '-b:a', '64k',
                 '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
-            engine_label = ""
+            engine_text = "Estándar"
 
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         success = await track_ffmpeg_progress(client, chat_id, status_message.id, process, duration, original_size, output_path)
@@ -195,9 +189,8 @@ async def run_compression_flow(client, chat_id, status_message):
         compressed_size = os.path.getsize(output_path)
         reduction = ((original_size - compressed_size) / original_size) * 100 if original_size > 0 else 0
         
-        # CAMALEÓN: Resumen estético
-        summary_title = f"✅ **Compresión Exitosa ({engine_label})**" if engine_label else "✅ **Compresión Exitosa**"
-        summary = (f"{summary_title}\n\n"
+        title = f"✅ **Compresión Exitosa ({engine_text})**" if is_gpu_available() else "✅ **Compresión Exitosa**"
+        summary = (f"{title}\n\n"
                     f"**📏 Original:** `{format_size(original_size)}`\n"
                     f"**📂 Comprimido:** `{format_size(compressed_size)}` (`{reduction:.1f}%` menos)\n\n"
                     f"Ahora, ¿cómo quieres continuar?")
@@ -232,15 +225,12 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
             raw_time = ffmpeg_data.get('out_time_us', '0')
             current_time_us = int(raw_time) if str(raw_time).isdigit() else 0
             if current_time_us == 0:
-                ffmpeg_data.clear()
-                continue
+                ffmpeg_data.clear(); continue
 
             current_time = time.time()
-            # Diferente intervalo de actualización según modo (1.5s CPU vs 2.0s GPU de tus códigos)
             interval = 2.0 if is_gpu else 1.5
             if current_time - last_update < interval:
-                ffmpeg_data.clear()
-                continue
+                ffmpeg_data.clear(); continue
             last_update = current_time
 
             current_time_sec = current_time_us / 1_000_000
@@ -253,7 +243,6 @@ async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, orig
             progress_bar = get_progress_bar(percentage)
             current_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
 
-            # CAMALEÓN: Título progresivo
             header = "COMPRIMIENDO (GPU)..." if is_gpu else "COMPRIMIENDO..."
             text = (
                 f"**{header}**\n"
@@ -306,7 +295,14 @@ async def upload_final_video(client, chat_id):
 @app.on_message(filters.command("start") & filters.private)
 async def start_command(client, message):
     clean_up(message.chat.id)
-    await message.reply("¡Hola! 👋 Soy tu bot para procesar videos.\n\nPuedo **comprimir** y **convertir** tus videos. **Envíame un video para empezar.**")
+    # DETECCIÓN AL TOCAR START
+    gpu_active = is_gpu_available()
+    engine = "NVIDIA GPU 🔥" if gpu_active else "CPU 💻"
+    await message.reply(
+        f"¡Hola! 👋 Soy tu bot para procesar videos.\n\n"
+        f"**Motor detectado:** `{engine}`\n\n"
+        "Puedo **comprimir** y **convertir** tus videos. **Envíame un video para empezar.**"
+    )
 
 @app.on_message(filters.video & filters.private)
 async def video_handler(client, message: Message):
@@ -334,12 +330,11 @@ async def callback_handler(client, cb: CallbackQuery):
         await cb.message.edit("Operación cancelada.")
         clean_up(chat_id)
     elif action == "action_compress":
-        # CAMALEÓN: Diferentes CRF por defecto según modo (GPU: 24, CPU: 22)
-        default_crf = '24' if is_gpu_available() else '22'
-        user_info['compression_options'] = {'crf': default_crf, 'resolution': '360', 'preset': 'veryfast'}
+        is_gpu = is_gpu_available()
+        user_info['compression_options'] = {'crf': '24' if is_gpu else '22', 'resolution': '360', 'preset': 'veryfast'}
         await show_compression_options(client, chat_id, cb.message.id)
     elif action == "compressopt_default":
-        await cb.message.edit(f"Iniciando compresión {'GPU' if is_gpu_available() else ''} por defecto...")
+        await cb.message.edit(f"Iniciando compresión {'GPU' if is_gpu_available() else ''}...")
         await run_compression_flow(client, chat_id, cb.message)
     elif action == "compressopt_advanced":
         await show_advanced_menu(client, chat_id, cb.message.id, "crf")
@@ -394,45 +389,48 @@ async def rename_handler(client, message: Message):
     user_info['state'] = 'uploading'
     await upload_final_video(client, chat_id)
 
-# --- Funciones de Menús (FUSIONADAS) ---
+# --- Menús Diferenciados ---
 async def show_compression_options(client, chat_id, msg_id):
-    # CAMALEÓN: Textos según modo
     if is_gpu_available():
-        text, btn_rec = "Elige cómo quieres comprimir:", "✅ Usar GPU (Recomendado)"
+        btn_rec = "✅ Usar GPU (Recomendado)"
     else:
-        text, btn_rec = "Elige cómo quieres comprimir:", "✅ Usar Opciones Recomendadas"
+        btn_rec = "✅ Usar Opciones Recomendadas"
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(btn_rec, callback_data="compressopt_default")], [InlineKeyboardButton("⚙️ Configurar Opciones Avanzadas", callback_data="compressopt_advanced")], [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]])
-    await update_message(client, chat_id, msg_id, text, reply_markup=keyboard)
+    await update_message(client, chat_id, msg_id, "Elige cómo quieres comprimir:", reply_markup=keyboard)
 
 async def show_advanced_menu(client, chat_id, msg_id, part, opts=None):
     is_gpu = is_gpu_available()
-    # CAMALEÓN: Opciones de CRF y títulos según modo
+    
+    # AJUSTES EXCLUSIVOS SEGÚN MOTOR
     if is_gpu:
-        crf_opts = [("Alta", "20"), ("Media", "24"), ("Económica", "28"), ("Baja", "32")]
         crf_title = "1/3: Calidad GPU (CQ)"
+        crf_opts = [("Alta", "20"), ("Media", "24"), ("Económica", "28"), ("Baja", "32")]
+        preset_title = "3/3: Velocidad GPU"
+        preset_opts = [("Máxima", "ultrafast"), ("Equilibrada", "medium"), ("Calidad", "slow")]
+        confirm_btn = "🚀 Iniciar Compresión GPU"
     else:
-        crf_opts = [("18", "18"), ("20", "20"), ("22", "22"), ("25", "25"), ("28", "28")]
         crf_title = "1/3: Calidad (CRF)"
+        crf_opts = [("18", "18"), ("20", "20"), ("22", "22"), ("25", "25"), ("28", "28")]
+        preset_title = "3/3: Velocidad"
+        preset_opts = [("Lenta", "slow"), ("Media", "medium"), ("Muy rápida", "veryfast"), ("Rápida", "fast"), ("Ultra rápida", "ultrafast")]
+        confirm_btn = "✅ Iniciar Compresión"
 
     menus = {
         "crf": {"text": crf_title, "opts": crf_opts, "prefix": "adv_crf"},
         "resolution": {"text": "2/3: Resolución", "opts": [("1080p", "1080"), ("720p", "720"), ("480p", "480"), ("360p", "360"), ("240p", "240")], "prefix": "adv_resolution"},
-        "preset": {"text": f"3/3: Velocidad {'GPU' if is_gpu else ''}", "opts": [("Máxima", "ultrafast"), ("Equilibrada", "medium"), ("Calidad", "slow")], "prefix": "adv_preset"}
+        "preset": {"text": preset_title, "opts": preset_opts, "prefix": "adv_preset"}
     }
     
     if part == "confirm":
-        # CAMALEÓN: Resumen de confirmación
         label = " (CQ)" if is_gpu else " (CRF)"
         text = (f"Confirmar opciones {'GPU' if is_gpu else ''}:\n"
                 f"- Calidad{label}: `{opts.get('crf', 'N/A')}`\n"
                 f"- Resolución: `{opts.get('resolution', 'N/A')}p`\n"
                 f"- Preset: `{opts.get('preset', 'N/A')}`")
-        btn_text = "🚀 Iniciar Compresión GPU" if is_gpu else "✅ Iniciar Compresión"
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(btn_text, callback_data="start_advanced_compression")]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(confirm_btn, callback_data="start_advanced_compression")]])
     else:
         info = menus[part]
         buttons = [InlineKeyboardButton(t, callback_data=f"{info['prefix']}_{v}") for t, v in info["opts"]]
-        # Dividir botones en filas de 2 o 3 para estética
         keyboard = InlineKeyboardMarkup([buttons[i:i+2] for i in range(0, len(buttons), 2)])
         text = info["text"]
     await update_message(client, chat_id, msg_id, text, reply_markup=keyboard)
@@ -462,10 +460,9 @@ async def start_bot_and_server():
             except: pass
     await app.start()
     me = await app.get_me()
-    mode = "GPU T4 🚀" if is_gpu_available() else "CPU 💻"
-    logger.info(f"Bot @{me.username} online en modo {mode}")
+    logger.info(f"Bot @{me.username} online.")
     await asyncio.Future()
 
 if __name__ == "__main__":
     try: asyncio.run(start_bot_and_server())
-    except: logger.info("Bot detenido.")
+    except: pass
