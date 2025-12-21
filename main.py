@@ -145,8 +145,11 @@ async def run_compression_flow(client, chat_id, status_message):
                    '-progress', 'pipe:1', '-nostats', '-y', output_path]
         else:
             modo_label = "CPU"
-            cmd = ['ffmpeg', '-i', downloaded_path, '-vf', 'scale=-2:360', '-r', '30', '-c:v', 'libx264', '-preset', 'veryfast',
-                   '-crf', '22', '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart',
+            # AJUSTE: Ahora CPU usa los mismos parámetros de 'opts' que GPU para mostrar detalles idénticos
+            cmd = ['ffmpeg', '-i', downloaded_path, 
+                   '-vf', f"scale=-2:{opts['resolution']}", 
+                   '-c:v', 'libx264', '-preset', opts['preset'],
+                   '-crf', opts['crf'], '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart',
                    '-progress', 'pipe:1', '-nostats', '-y', output_path]
 
         await update_message(client, chat_id, status_message.id, f"COMPRIMIENDO ({modo_label})...")
@@ -269,10 +272,8 @@ async def callback_handler(client, cb: CallbackQuery):
     await cb.answer()
 
     if data == "action_compress":
-        if user_settings[chat_id].get('use_gpu'): await show_compression_options(client, chat_id, cb.message.id)
-        else: 
-            p_info['compression_options'] = {'crf': '22', 'resolution': '360', 'preset': 'veryfast'}
-            await run_compression_flow(client, chat_id, cb.message)
+        # Ahora tanto GPU como CPU pasan por el menú de opciones para tener la configuración lista
+        await show_compression_options(client, chat_id, cb.message.id)
     elif data == "compressopt_default":
         p_info['compression_options'] = {'crf': '24', 'resolution': '360', 'preset': 'veryfast'}
         await run_compression_flow(client, chat_id, cb.message)
@@ -295,19 +296,22 @@ async def callback_handler(client, cb: CallbackQuery):
 
 # --- Menús ---
 async def show_compression_options(client, chat_id, msg_id):
-    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ GPU Default", callback_data="compressopt_default")],
-                                     [InlineKeyboardButton("⚙️ GPU Avanzada", callback_data="compressopt_advanced")],
+    # Texto adaptado según el hardware seleccionado
+    hw_label = "GPU" if user_settings[chat_id].get('use_gpu') else "CPU"
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(f"✅ {hw_label} Default", callback_data="compressopt_default")],
+                                     [InlineKeyboardButton(f"⚙️ {hw_label} Avanzada", callback_data="compressopt_advanced")],
                                      [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]])
-    await update_message(client, chat_id, msg_id, "Opciones de hardware GPU:", reply_markup=keyboard)
+    await update_message(client, chat_id, msg_id, f"Opciones de hardware {hw_label}:", reply_markup=keyboard)
 
 async def show_advanced_menu(client, chat_id, msg_id, part, opts=None):
+    hw_label = "GPU (CQ)" if user_settings[chat_id].get('use_gpu') else "CPU (CRF)"
     menus = {
-        "crf": {"text": "Calidad GPU (CQ)", "opts": [("Alta", "20"), ("Media", "24"), ("Económica", "28"), ("Baja", "32")], "prefix": "adv_crf"},
+        "crf": {"text": f"Calidad {hw_label}", "opts": [("Alta", "20"), ("Media", "24"), ("Económica", "28"), ("Baja", "32")], "prefix": "adv_crf"},
         "resolution": {"text": "Resolución", "opts": [("1080p", "1080"), ("720p", "720"), ("480p", "480"), ("360p", "360"), ("240p", "240")], "prefix": "adv_resolution"},
-        "preset": {"text": "Velocidad GPU", "opts": [("Máxima", "ultrafast"), ("Equilibrada", "medium"), ("Calidad", "slow")], "prefix": "adv_preset"}
+        "preset": {"text": f"Velocidad {hw_label.split()[0]}", "opts": [("Máxima", "ultrafast"), ("Equilibrada", "medium"), ("Calidad", "slow")], "prefix": "adv_preset"}
     }
     if part == "confirm":
-        text = f"Confirmar GPU: CQ {opts.get('crf')} | {opts.get('resolution')}p | {opts.get('preset')}"
+        text = f"Confirmar {hw_label.split()[0]}: Calidad {opts.get('crf')} | {opts.get('resolution')}p | {opts.get('preset')}"
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Iniciar", callback_data="start_advanced_compression")]])
     else:
         info = menus[part]
