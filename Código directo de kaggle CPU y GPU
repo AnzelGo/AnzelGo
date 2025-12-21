@@ -1,0 +1,353 @@
+# @title 🚀 Kaggle GPU/CPU Hybrid Runner - Edición Persistente
+import os
+import time
+import subprocess
+import shutil
+
+# --- 1. Configuración de Credenciales ---
+# Cambia estos valores si es necesario
+os.environ['API_ID'] = '27047123'
+os.environ['API_HASH'] = '0433bb3ec4789fcd09cbd3ea11672cd0'
+os.environ['BOT_TOKEN'] = '8390723783:AAH8G-ybpVuKdLbzeu21V0YPcHChHN87f9c'
+os.environ['PORT'] = '8000'
+
+WORKING_DIR = "/kaggle/working"
+MAIN_FILE = os.path.join(WORKING_DIR, "main.py")
+
+# --- 2. Inyección del Código Híbrido ---
+# Este bloque escribe el código que fusionamos directamente en el archivo main.py
+code_content = """
+import os
+import ffmpeg
+import psutil
+import time
+import re
+import asyncio
+import logging
+import subprocess
+from pyrogram import Client, filters
+from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.errors import MessageNotModified, FloodWait
+import nest_asyncio
+from threading import Thread
+from flask import Flask
+
+# Servidor Web para persistencia
+app_flask = Flask(__name__)
+@app_flask.route('/')
+def hello_world(): return 'Bot is alive!'
+
+def run_server():
+    port = int(os.environ.get('PORT', 8000))
+    app_flask.run(host='0.0.0.0', port=port)
+
+def is_gpu_available():
+    try:
+        subprocess.check_output(['nvidia-smi'], stderr=subprocess.STDOUT)
+        return True
+    except: return False
+
+nest_asyncio.apply()
+API_ID = os.environ.get("API_ID")
+API_HASH = os.environ.get("API_HASH")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+MAX_VIDEO_SIZE_MB = 4000
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+user_data = {}
+
+app = Client("video_processor_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+def format_size(size_bytes):
+    if size_bytes is None: return "0 B"
+    if size_bytes < 1024: return f"{size_bytes} Bytes"
+    if size_bytes < 1024**2: return f"{size_bytes/1024:.2f} KB"
+    if size_bytes < 1024**3: return f"{size_bytes/1024**2:.2f} MB"
+    return f"{size_bytes/1024**3:.2f} GB"
+
+def human_readable_time(seconds: int):
+    if seconds is None: return "00:00"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+async def update_message(client, chat_id, message_id, text, reply_markup=None):
+    try: await client.edit_message_text(chat_id, message_id, text, reply_markup=reply_markup)
+    except MessageNotModified: pass
+    except FloodWait as e:
+        await asyncio.sleep(e.value)
+        await update_message(client, chat_id, message_id, text, reply_markup)
+
+def get_progress_bar(percentage):
+    comp = int(percentage // 10)
+    return '■' * comp + '□' * (10 - comp)
+
+async def progress_bar_handler(current, total, client, message, start_time, action_text):
+    chat_id = message.chat.id
+    user_info = user_data.get(chat_id, {})
+    if time.time() - user_info.get('last_update_time', 0) < 5: return
+    user_info['last_update_time'] = time.time()
+    percentage = (current * 100 / total) if total > 0 else 0
+    elapsed = time.time() - start_time
+    speed = current / elapsed if elapsed > 0 else 0
+    eta = (total - current) / speed if speed > 0 else 0
+    p_bar = get_progress_bar(percentage)
+    act = action_text.replace('📥 Descargando', 'DESCARGANDO...').replace('⬆️ Subiendo', 'SUBIENDO...').replace('🗜️ Comprimiendo...', 'COMPRIMIENDO...')
+    text = f"**{act}**\\n`[{p_bar}] {percentage:.1f}%`\\n\\n**Tamaño:** `{format_size(current)} / {format_size(total)}`\\n**Velocidad:** `{format_size(speed)}/s` | **ETA:** `{human_readable_time(eta)}`"
+    await update_message(client, chat_id, message.id, text)
+
+async def download_video(client, chat_id, status_message):
+    user_info = user_data.get(chat_id)
+    user_info['state'] = 'downloading'
+    start_t = time.time()
+    try:
+        orig = await client.get_messages(chat_id, user_info['original_message_id'])
+        path = await client.download_media(message=orig, file_name=os.path.join(DOWNLOAD_DIR, f"{chat_id}_{user_info['video_file_name']}"), progress=progress_bar_handler, progress_args=(client, status_message, start_t, "📥 Descargando"))
+        user_info['download_path'] = path
+        user_info['final_path'] = path
+        return path
+    except: return None
+
+async def run_compression_flow(client, chat_id, status_message):
+    dl_path = await download_video(client, chat_id, status_message)
+    if not dl_path: return
+    user_info = user_data[chat_id]
+    user_info['state'] = 'compressing'
+    opts = user_info['compression_options']
+    out_path = os.path.join(DOWNLOAD_DIR, f"compressed_{chat_id}.mp4")
+    probe = ffmpeg.probe(dl_path)
+    duration = float(probe.get('format', {}).get('duration', 0))
+    orig_size = os.path.getsize(dl_path)
+    is_gpu = is_gpu_available()
+
+    if is_gpu:
+        await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (GPU)...")
+        p_map = {'ultrafast': 'p1', 'veryfast': 'p2', 'fast': 'p3', 'medium': 'p4', 'slow': 'p6'}
+        cmd = ['ffmpeg', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda', '-i', dl_path, '-vf', f"scale_cuda=-2:{opts['resolution']}", '-c:v', 'h264_nvenc', '-preset', p_map.get(opts['preset'], 'p4'), '-rc', 'vbr', '-cq', opts['crf'], '-b:v', '0', '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', out_path]
+    else:
+        await update_message(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO...")
+        cmd = ['ffmpeg', '-i', dl_path, '-vf', f"scale=-2:{opts['resolution']}", '-r', '30', '-crf', opts['crf'], '-preset', opts['preset'], '-vcodec', 'libx264', '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', out_path]
+
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    if await track_ffmpeg_progress(client, chat_id, status_message.id, process, duration, orig_size, out_path):
+        user_info['final_path'] = out_path
+        comp_size = os.path.getsize(out_path)
+        red = ((orig_size - comp_size) / orig_size) * 100 if orig_size > 0 else 0
+        title = f"✅ **Compresión Exitosa ({'GPU T4' if is_gpu else 'Estándar'})**"
+        summary = f"{title}\\n\\n**📏 Original:** `{format_size(orig_size)}`\\n**📂 Comprimido:** `{format_size(comp_size)}` (`{red:.1f}%` menos)\\n\\nAhora, ¿cómo quieres continuar?"
+        await show_conversion_options(client, chat_id, status_message.id, summary)
+    if dl_path and os.path.exists(dl_path): os.remove(dl_path)
+
+async def track_ffmpeg_progress(client, chat_id, msg_id, process, duration, original_size, output_path):
+    last_up = 0
+    ffmpeg_data = {}
+    is_gpu = is_gpu_available()
+    while True:
+        line = await process.stdout.readline()
+        if not line: break
+        line = line.decode('utf-8').strip()
+        match = re.match(r'(\\w+)=(.*)', line)
+        if match:
+            k, v = match.groups()
+            ffmpeg_data[k] = v
+        if ffmpeg_data.get('progress') == 'continue':
+            cur_us = int(ffmpeg_data.get('out_time_us', 0))
+            if cur_us == 0 or time.time() - last_up < (2.0 if is_gpu else 1.5): continue
+            last_up = time.time()
+            cur_sec = cur_us / 1000000
+            spd = ffmpeg_data.get('speed', '0x').replace('x', '')
+            try: spd_m = float(spd)
+            except: spd_m = 0.01
+            perc = min((cur_sec / duration) * 100, 100)
+            eta = (duration - cur_sec) / spd_m if spd_m > 0 else 0
+            p_bar = get_progress_bar(perc)
+            cur_sz = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+            head = "COMPRIMIENDO (GPU)..." if is_gpu else "COMPRIMIENDO..."
+            text = f"**{head}**\\n`[{p_bar}] {perc:.1f}%`\\n\\n**Tamaño:** `{format_size(cur_sz)} / {format_size(original_size)}`\\n**Velocidad:** `{spd_m:.2f}x` | **ETA:** `{human_readable_time(eta)}`"
+            await update_message(client, chat_id, msg_id, text)
+            ffmpeg_data.clear()
+    await process.wait()
+    return process.returncode == 0
+
+async def upload_final_video(client, chat_id):
+    user_info = user_data.get(chat_id)
+    final_path, status_id = user_info['final_path'], user_info['status_message_id']
+    status_msg = await client.get_messages(chat_id, status_id)
+    name = user_info.get('new_name') or os.path.basename(user_info['video_file_name'])
+    if not name.endswith(".mp4"): name += ".mp4"
+    try:
+        probe = ffmpeg.probe(final_path)
+        stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), {})
+        dur = int(float(stream.get('duration', 0)))
+        w, h = int(stream.get('width', 0)), int(stream.get('height', 0))
+        await update_message(client, chat_id, status_id, "⬆️ SUBIENDO...")
+        if user_info.get('send_as_file'):
+            await client.send_document(chat_id, final_path, thumb=user_info.get('thumbnail_path'), file_name=name, caption=f"`{name}`", progress=progress_bar_handler, progress_args=(client, status_msg, time.time(), "⬆️ Subiendo"))
+        else:
+            await client.send_video(chat_id, final_path, caption=f"`{name}`", thumb=user_info.get('thumbnail_path'), duration=dur, width=w, height=h, supports_streaming=True, progress=progress_bar_handler, progress_args=(client, status_msg, time.time(), "⬆️ Subiendo"))
+        await status_msg.delete()
+        await client.send_message(chat_id, "✅ ¡Proceso completado!")
+    finally: clean_up(chat_id)
+
+@app.on_message(filters.command("start") & filters.private)
+async def start_command(client, message):
+    clean_up(message.chat.id)
+    engine = "NVIDIA GPU 🔥" if is_gpu_available() else "CPU 💻"
+    await message.reply(f"¡Hola! 👋 Soy tu bot para procesar videos.\\n\\n**Motor detectado:** `{engine}`\\n\\nEnvíame un video para empezar.")
+
+@app.on_message(filters.video & filters.private)
+async def video_handler(client, message):
+    chat_id = message.chat.id
+    user_data[chat_id] = {'state': 'awaiting_action', 'original_message_id': message.id, 'video_file_name': message.video.file_name or f"video_{message.id}.mp4", 'last_update_time': 0}
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🗜️ Comprimir Video", callback_data="action_compress")], [InlineKeyboardButton("⚙️ Solo Enviar/Convertir", callback_data="action_convert_only")], [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]])
+    await message.reply_text("Video recibido. ¿Qué quieres hacer?", reply_markup=kb, quote=True)
+
+@app.on_callback_query()
+async def callback_handler(client, cb):
+    chat_id, user_info = cb.message.chat.id, user_data.get(cb.message.chat.id)
+    if not user_info: return
+    action = cb.data
+    user_info['status_message_id'] = cb.message.id
+    await cb.answer()
+    if action == "cancel": clean_up(chat_id); await cb.message.edit("Operación cancelada.")
+    elif action == "action_compress":
+        is_gpu = is_gpu_available()
+        user_info['compression_options'] = {'crf': '24' if is_gpu else '22', 'resolution': '360', 'preset': 'veryfast'}
+        await show_compression_options(client, chat_id, cb.message.id)
+    elif action == "compressopt_default": await cb.message.edit("Iniciando..."); await run_compression_flow(client, chat_id, cb.message)
+    elif action == "compressopt_advanced": await show_advanced_menu(client, chat_id, cb.message.id, "crf")
+    elif action.startswith("adv_"):
+        part, val = action.split("_")[1], action.split("_")[2]
+        user_info.setdefault('compression_options', {})[part] = val
+        next_s = {"crf": "resolution", "resolution": "preset", "preset": "confirm"}.get(part)
+        if next_s: await show_advanced_menu(client, chat_id, cb.message.id, next_s, user_info['compression_options'])
+    elif action == "start_advanced_compression": await cb.message.edit("Iniciando..."); await run_compression_flow(client, chat_id, cb.message)
+    elif action == "action_convert_only":
+        await cb.message.edit("Descargando..."); 
+        if await download_video(client, chat_id, cb.message): await show_conversion_options(client, chat_id, cb.message.id, "Descarga completa.")
+    elif action == "convertopt_withthumb": user_info['state'] = 'waiting_for_thumbnail'; await cb.message.edit("Envía la miniatura.")
+    elif action == "convertopt_nothumb": await show_rename_options(client, chat_id, cb.message.id)
+    elif action == "convertopt_asfile": user_info['send_as_file'] = True; await show_rename_options(client, chat_id, cb.message.id)
+    elif action == "renameopt_yes": user_info['state'] = 'waiting_for_new_name'; await cb.message.edit("Envía el nombre.")
+    elif action == "renameopt_no": await upload_final_video(client, chat_id)
+
+@app.on_message(filters.photo & filters.private)
+async def thumb_h(client, message):
+    user_info = user_data.get(message.chat.id)
+    if not user_info or user_info.get('state') != 'waiting_for_thumbnail': return
+    user_info['thumbnail_path'] = await client.download_media(message)
+    await show_rename_options(client, message.chat.id, user_info['status_message_id'])
+
+@app.on_message(filters.text & filters.private)
+async def rename_h(client, message):
+    user_info = user_data.get(message.chat.id)
+    if not user_info or user_info.get('state') != 'waiting_for_new_name': return
+    user_info['new_name'] = message.text.strip()
+    await upload_final_video(message.chat.id)
+
+async def show_compression_options(client, chat_id, msg_id):
+    btn = "✅ Usar GPU (Rec)" if is_gpu_available() else "✅ Usar Recomendadas"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(btn, callback_data="compressopt_default")], [InlineKeyboardButton("⚙️ Avanzadas", callback_data="compressopt_advanced")], [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]])
+    await update_message(client, chat_id, msg_id, "Elige opción:", kb)
+
+async def show_advanced_menu(client, chat_id, msg_id, part, opts=None):
+    is_gpu = is_gpu_available()
+    if is_gpu:
+        c_opts = [("Alta", "20"), ("Media", "24"), ("Baja", "32")]
+        p_opts = [("Máxima", "ultrafast"), ("Equilibrada", "medium"), ("Calidad", "slow")]
+    else:
+        c_opts = [("18", "18"), ("22", "22"), ("28", "28")]
+        p_opts = [("Lenta", "slow"), ("Media", "medium"), ("Rápida", "fast"), ("Ultra", "ultrafast")]
+    
+    menus = {"crf": {"text": "Calidad", "opts": c_opts, "prefix": "adv_crf"}, "resolution": {"text": "Res", "opts": [("720p", "720"), ("480p", "480"), ("360p", "360")], "prefix": "adv_resolution"}, "preset": {"text": "Velocidad", "opts": p_opts, "prefix": "adv_preset"}}
+    
+    if part == "confirm":
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Iniciar", callback_data="start_advanced_compression")]])
+        await update_message(client, chat_id, msg_id, f"Confirmar: {opts}", kb)
+    else:
+        info = menus[part]
+        btns = [InlineKeyboardButton(t, callback_data=f"{info['prefix']}_{v}") for t, v in info["opts"]]
+        await update_message(client, chat_id, msg_id, info['text'], InlineKeyboardMarkup([btns]))
+
+async def show_conversion_options(client, chat_id, msg_id, text):
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🖼️ Miniatura", callback_data="convertopt_withthumb"), InlineKeyboardButton("🚫 Sin", callback_data="convertopt_nothumb")], [InlineKeyboardButton("📂 Archivo", callback_data="convertopt_asfile")]])
+    await update_message(client, chat_id, msg_id, text, kb)
+
+async def show_rename_options(client, chat_id, msg_id):
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("✏️ Renombrar", callback_data="renameopt_yes"), InlineKeyboardButton("➡️ No", callback_data="renameopt_no")]])
+    await update_message(client, chat_id, msg_id, "¿Renombrar?", kb)
+
+def clean_up(chat_id):
+    info = user_data.pop(chat_id, None)
+    if not info: return
+    for k in ['download_path', 'thumbnail_path', 'final_path']:
+        p = info.get(k)
+        if p and os.path.exists(p): os.remove(p)
+
+async def start_all():
+    Thread(target=run_server).start()
+    await app.start()
+    await asyncio.Future()
+
+if __name__ == "__main__":
+    asyncio.run(start_all())
+"""
+
+with open(MAIN_FILE, "w") as f:
+    f.write(code_content)
+
+# --- 3. Preparación del Entorno ---
+print("🛠️ Instalando dependencias necesarias...")
+!pip install tgcrypto pyrogram ffmpeg-python psutil flask nest_asyncio --quiet
+
+def limpieza_inteligente():
+    ahora = time.time()
+    count = 0
+    for root, dirs, files in os.walk(WORKING_DIR):
+        for file in files:
+            if file.endswith(('.mp4', '.mkv', '.tmp', '.aria2')):
+                path = os.path.join(root, file)
+                if (ahora - os.path.getmtime(path)) > 300:
+                    try: os.remove(path); count += 1
+                    except: pass
+    if count > 0: print(f"🧹 Limpieza: {count} archivos eliminados.")
+
+def obtener_estado_disco():
+    total, usado, libre = shutil.disk_usage(WORKING_DIR)
+    return {"usado": usado // (1024**3), "total": total // (1024**3), "porcentaje": (usado/total)*100}
+
+# --- 4. Ejecución y Vigilancia ---
+!pkill -f main.py
+!pkill -f ffmpeg
+time.sleep(2)
+
+log_file = os.path.join(WORKING_DIR, "bot_log.txt")
+print("🚀 Lanzando Bot Híbrido...")
+subprocess.Popen(["python3", MAIN_FILE], stdout=open(log_file, "a"), stderr=open(log_file, "a"))
+
+try:
+    subprocess.run(['nvidia-smi'], check=True, capture_output=True)
+    hardware = "GPU T4 🔥"
+except:
+    hardware = "CPU 💻"
+
+print(f"✅ Vigilancia iniciada. Hardware: {hardware}")
+
+# Bucle de 12 horas para mantener activo el Kernel
+try:
+    for minuto in range(720):
+        check = os.popen("pgrep -f main.py").read()
+        if not check:
+            subprocess.Popen(["python3", MAIN_FILE], stdout=open(log_file, "a"), stderr=open(log_file, "a"))
+        
+        disco = obtener_estado_disco()
+        if minuto % 10 == 0: limpieza_inteligente()
+        
+        print(f"📊 [Min {minuto}] {hardware} | Disco: {disco['usado']}GB/{disco['total']}GB ({disco['porcentaje']:.1f}%) | Bot: {'✅' if check else '❌'}")
+        time.sleep(60)
+except KeyboardInterrupt:
+    print("🛑 Detenido.")
