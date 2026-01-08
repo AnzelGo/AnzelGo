@@ -103,7 +103,7 @@ def create_power_guard(bot_id):
                 msg_priv = (
                     "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
                     "Este bot ha sido puesto en **Modo Privado** por el administrador. "
-                    "Actualmente solo usuarios autorizados pueden interactuar.\n\n"
+                    "Actualmente solo usuarios autorizados pueden interactuar, contacta con el administrador para obtener el acceso. ADM: @AnzZGTv1\n\n"
                     f"👤 **Tu ID:** `{user_id}`"
                 )
                 if isinstance(update, CallbackQuery):
