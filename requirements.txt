@@ -5,3 +5,8 @@ nest-asyncio
 psutil
 Flask
 numba
+python-telegram-bot
+requests
+aiohttp
+aiofiles
+python-dotenv
