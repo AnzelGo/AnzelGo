@@ -60,41 +60,55 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# LÓGICA PANEL DE CONTROL (BOT 4) - OPTIMIZADO
+# LÓGICA PANEL DE CONTROL (BOT 4) - PREMIUM
 # ==========================================
 
 def get_main_menu():
+    # Iconos simplificados para botones pequeños y simétricos
     s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
-    # Diseño de botones ultra-compacto
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"{s(1)} Uploader", callback_data="t_1"),
-            InlineKeyboardButton(f"{s(2)} Anzel", callback_data="t_2"),
-            InlineKeyboardButton(f"{s(3)} Downloader", callback_data="t_3")
+            InlineKeyboardButton(f"{s(1)} UPLOADER", callback_data="t_1"),
+            InlineKeyboardButton(f"{s(2)} ANZEL PRO", callback_data="t_2")
         ],
         [
-            InlineKeyboardButton("⚡ ON Todo", callback_data="all_on"),
-            InlineKeyboardButton("❄️ OFF Todo", callback_data="all_off")
+            InlineKeyboardButton(f"{s(3)} DOWNLOADS", callback_data="t_3"),
+            InlineKeyboardButton("🔄 REFRESH", callback_data="refresh")
         ],
         [
-            InlineKeyboardButton("📊 Stats", callback_data="stats"),
-            InlineKeyboardButton("🧹 Limpiar", callback_data="clean_all"),
-            InlineKeyboardButton("🔄 Refresh", callback_data="refresh")
+            InlineKeyboardButton("⚡ POWER ON", callback_data="all_on"),
+            InlineKeyboardButton("❄️ STANDBY", callback_data="all_off")
+        ],
+        [
+            InlineKeyboardButton("📊 SYSTEM", callback_data="stats"),
+            InlineKeyboardButton("🧹 PURGE", callback_data="clean_all")
         ]
     ])
 
 def get_status_text():
-    # Genera un resumen visual del estado del servidor
-    s = lambda x: "✅ ACTIVO" if BOT_STATUS[x] else "❌ APAGADO"
+    # Diseño de Dashboard Profesional
     ram = psutil.virtual_memory().percent
     cpu = psutil.cpu_percent()
+    
+    # Barra de progreso visual para RAM
+    bar_len = 8
+    filled = int(ram / 100 * bar_len)
+    ram_bar = "💊" * filled + "⚪" * (bar_len - filled)
+    
+    status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
+    
     return (
-        f"<b>🎛 PANEL DE CONTROL</b>\n\n"
-        f"🛰 <b>Bots:</b>\n"
-        f"├ 1. Uploader: {s(1)}\n"
-        f"├ 2. Anzel Pro: {s(2)}\n"
-        f"└ 3. Downloads: {s(3)}\n\n"
-        f"🖥 <b>Servidor:</b> CPU {cpu}% | RAM {ram}%"
+        f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
+        f"<code>────────────────────</code>\n"
+        f"<b>🛰 STATUS RECAP:</b>\n"
+        f"  ├ 1. Uploader    ▸ {'<code>ACTIVE</code>' if BOT_STATUS[1] else '<code>OFFLINE</code>'}\n"
+        f"  ├ 2. Anzel Video ▸ {'<code>ACTIVE</code>' if BOT_STATUS[2] else '<code>OFFLINE</code>'}\n"
+        f"  └ 3. Downloader   ▸ {'<code>ACTIVE</code>' if BOT_STATUS[3] else '<code>OFFLINE</code>'}\n"
+        f"<code>────────────────────</code>\n"
+        f"<b>💻 SERVER RESOURCES:</b>\n"
+        f"  <b>CPU:</b> <code>{cpu}%</code>\n"
+        f"  <b>RAM:</b> <code>[{ram_bar}] {ram}%</code>\n"
+        f"<code>────────────────────</code>"
     )
 
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
@@ -105,49 +119,46 @@ async def start_controller(_, m):
 async def manager_callbacks(_, q):
     data = q.data
     
-    # Lógica de Interruptores Individuales
     if data.startswith("t_"):
         bid = int(data.split("_")[1])
         BOT_STATUS[bid] = not BOT_STATUS[bid]
-        await q.answer(f"Bot {bid} cambiado")
+        await q.answer(f"Módulo {bid} actualizado")
         
-    # Lógica Global
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
-        await q.answer("🚀 Todos los sistemas activos", show_alert=True)
+        await q.answer("🚀 Full System Startup", show_alert=False)
         
     elif data == "all_off":
         for k in BOT_STATUS: BOT_STATUS[k] = False
-        await q.answer("❄️ Todos los sistemas pausados", show_alert=True)
+        await q.answer("❄️ System Standby", show_alert=False)
 
-    # Actualizar Stats en el mensaje
     elif data == "stats":
         disco = shutil.disk_usage("/")
-        info = f"📂 Disco: {disco.used // (2**30)}GB / {disco.total // (2**30)}GB"
-        await q.answer(info, show_alert=True)
+        msg = f"📂 STORAGE INFO:\nUsed: {disco.used // (2**30)}GB\nFree: {disco.free // (2**30)}GB\nTotal: {disco.total // (2**30)}GB"
+        await q.answer(msg, show_alert=True)
         
-    # Limpieza
     elif data == "clean_all":
         dirs = ["/kaggle/working/downloads", "downloads"]
         count = 0
         for d in dirs:
             if os.path.exists(d):
                 for f in os.listdir(d):
-                    try:
-                        os.remove(os.path.join(d, f))
-                        count += 1
+                    try: os.remove(os.path.join(d, f)); count += 1
                     except: pass
-        await q.answer(f"🧹 {count} archivos eliminados", show_alert=True)
+        await q.answer(f"🧹 Purge Complete: {count} files removed", show_alert=True)
 
-    # Refrescar Menú (Refresh)
     elif data == "refresh":
-        await q.answer("Actualizando...")
+        await q.answer("Data Refreshed")
 
-    # Siempre editamos el mensaje original para que se vea dinámico
+    # Actualización estética sin parpadeo
     try:
-        await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
+        await q.message.edit_text(
+            get_status_text(), 
+            reply_markup=get_main_menu()
+        )
     except MessageNotModified:
         pass
+
 
 
 # ==============================================================================
