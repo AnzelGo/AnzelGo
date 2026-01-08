@@ -33,22 +33,33 @@ nest_asyncio.apply()
 # CONFIGURACIÓN GLOBAL Y CONTROLADOR (BOT 4)
 # ==========================================
 
-# Usamos os.getenv para las credenciales de la API de Telegram
+# Archivo persistente para usuarios autorizados
+DB_PATH = "authorized_users.json"
+
+def load_authorized():
+    if os.path.exists(DB_PATH):
+        try:
+            with open(DB_PATH, "r") as f: return json.load(f)
+        except: return {}
+    return {}
+
+def save_authorized(users):
+    with open(DB_PATH, "w") as f: json.dump(users, f)
+
+# --- CREDENCIALES ---
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
-
-# --- TOKENS ---
-BOT1_TOKEN = os.getenv("BOT1_TOKEN") # Uploader
-BOT2_TOKEN = os.getenv("BOT2_TOKEN") # Anzel Repo
-BOT3_TOKEN = os.getenv("BOT3_TOKEN") # Descargas
-BOT4_TOKEN = os.getenv("BOT4_TOKEN") # Master Controller
-
-# --- ADMIN ID ---
+BOT1_TOKEN = os.getenv("BOT1_TOKEN")
+BOT2_TOKEN = os.getenv("BOT2_TOKEN")
+BOT3_TOKEN = os.getenv("BOT3_TOKEN")
+BOT4_TOKEN = os.getenv("BOT4_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
 
-# --- ESTADOS (Interruptores) ---
+# --- ESTADOS ---
 BOT_STATUS = {1: False, 2: False, 3: False}
-ONLY_ADMIN_MODE = False  # Nuevo estado para el botón Solo Admin
+ONLY_ADMIN_MODE = False
+AUTHORIZED_USERS = load_authorized() # Ahora es un diccionario {str(id): "Nombre"}
+WAITING_FOR_ID = False 
 
 # --- CLIENTES ---
 app1 = Client("bot_uploader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN)
@@ -56,12 +67,11 @@ app2 = Client("bot_video_pro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_
 app3 = Client("bot_limpieza", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN)
 app4 = Client("bot_master", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN)
 
-# --- CONFIGURACIÓN LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# ⚡ SISTEMA DE SEGURIDAD, MANTENIMIENTO Y ADMIN ⚡
+# ⚡ SISTEMA DE SEGURIDAD Y ACCESO PRIVADO ⚡
 # ==========================================
 from pyrogram import StopPropagation
 from pyrogram.types import CallbackQuery, Message
@@ -71,50 +81,53 @@ def create_power_guard(bot_id):
     async def power_guard(client, update):
         user_id = update.from_user.id if update.from_user else 0
         
-        # 1. FILTRO DE APAGADO TOTAL (Nadie entra)
+        # 1. FILTRO APAGADO
         if not BOT_STATUS.get(bot_id, False):
             msg_off = (
                 "🛠 **SISTEMA EN MANTENIMIENTO** 🛠\n\n"
-                "Este módulo se encuentra optimizándose. Inténtelo más tarde."
+                "Estimado usuario, este módulo se encuentra actualmente en "
+                "labores de optimización. Por favor, inténtelo más tarde.\n\n"
+                "*Disculpe las molestias.*"
             )
             if isinstance(update, CallbackQuery):
-                try: await update.answer("⚠️ Bot Apagado por Mantenimiento.", show_alert=True)
+                try: await update.answer("⚠️ Este sistema está APAGADO por mantenimiento.", show_alert=True)
                 except: pass
             elif isinstance(update, Message) and update.chat.type.value == "private":
                 try: await update.reply_text(msg_off)
                 except: pass
             raise StopPropagation
 
-        # 2. FILTRO SOLO ADMIN (Si está activo y no eres tú, se bloquea)
-        if ONLY_ADMIN_MODE and user_id != ADMIN_ID:
-            msg_admin = (
-                "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                "Este bot ha sido puesto en **Modo Privado** por el administrador. "
-                "Actualmente solo usuarios autorizados pueden interactuar."
-            )
-            if isinstance(update, CallbackQuery):
-                try: await update.answer("🔒 Modo Solo Admin Activo.", show_alert=True)
-                except: pass
-            elif isinstance(update, Message) and update.chat.type.value == "private":
-                try: await update.reply_text(msg_admin)
-                except: pass
-            raise StopPropagation
+        # 2. FILTRO MODO PRIVADO
+        if ONLY_ADMIN_MODE:
+            if user_id != ADMIN_ID and str(user_id) not in AUTHORIZED_USERS:
+                msg_priv = (
+                    "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
+                    "Este bot ha sido puesto en **Modo Privado** por el administrador. "
+                    "Actualmente solo usuarios autorizados pueden interactuar.\n\n"
+                    f"👤 **Tu ID:** `{user_id}`"
+                )
+                if isinstance(update, CallbackQuery):
+                    try: await update.answer("🔒 Modo Privado Activo. Acceso denegado.", show_alert=True)
+                    except: pass
+                elif isinstance(update, Message) and update.chat.type.value == "private":
+                    try: await update.reply_text(msg_priv)
+                    except: pass
+                raise StopPropagation
             
     return power_guard
 
-# REGISTRO DE PROTECCIÓN EN GRUPO -1
 for bid, app in [(1, app1), (2, app2), (3, app3)]:
     guard = create_power_guard(bid)
     app.add_handler(MessageHandler(guard), group=-1)
     app.add_handler(CallbackQueryHandler(guard), group=-1)
 
 # ==========================================
-# LÓGICA PANEL DE CONTROL (BOT 4) - V4 PRO
+# LÓGICA PANEL DE CONTROL (BOT 4)
 # ==========================================
 
 def get_main_menu():
     s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
-    adm_status = "🔐 SOLO ADM: ON" if ONLY_ADMIN_MODE else "🔓 SOLO ADM: OFF"
+    adm_btn = "🔐 PRIVADO: ON" if ONLY_ADMIN_MODE else "🔓 PRIVADO: OFF"
     
     return InlineKeyboardMarkup([
         [
@@ -126,81 +139,130 @@ def get_main_menu():
             InlineKeyboardButton("🔄 REFRESH", callback_data="refresh")
         ],
         [
-            InlineKeyboardButton("⚡ POWER ON", callback_data="all_on"),
-            InlineKeyboardButton("❄️ STANDBY", callback_data="all_off")
+            InlineKeyboardButton(f"{adm_btn}", callback_data="toggle_admin"),
+            InlineKeyboardButton("🧹 PURGE", callback_data="clean_all")
         ],
         [
-            InlineKeyboardButton(f"{adm_status}", callback_data="toggle_admin"),
-            InlineKeyboardButton("🧹 PURGE", callback_data="clean_all")
+            InlineKeyboardButton("➕ AGREGAR ID", callback_data="add_user"),
+            InlineKeyboardButton("👥 LISTA", callback_data="view_users")
+        ],
+        [
+            InlineKeyboardButton("⚡ POWER ON", callback_data="all_on"),
+            InlineKeyboardButton("❄️ STANDBY", callback_data="all_off")
         ]
     ])
 
 def get_status_text():
     cpu = psutil.cpu_percent()
     ram = psutil.virtual_memory()
+    disco = shutil.disk_usage("/")
+    
     def mini_bar(pct, total=5):
         filled = int(pct / 100 * total)
         return "▰" * filled + "▱" * (total - filled)
 
     status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
-    adm_tag = "⚠️ <b>MODO SOLO ADMIN ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
+    adm_tag = "⚠️ <b>MODO PRIVADO ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
     
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
         f"{adm_tag}"
         f"<code>──────────────────────</code>\n"
-        f"<b>MODULOS:</b>\n"
+        f"<b>MODULOS DE SERVICIO:</b>\n"
         f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
         f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
         f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
-        f"<b>NÚCLEO:</b>\n"
+        f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
         f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
         f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
+        f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
         f"<code>──────────────────────</code>"
     )
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
-async def manager_callbacks(_, q):
-    global ONLY_ADMIN_MODE
+async def manager_callbacks(c, q):
+    global ONLY_ADMIN_MODE, WAITING_FOR_ID, AUTHORIZED_USERS
     data = q.data
     
     if data.startswith("t_"):
         bid = int(data.split("_")[1])
         BOT_STATUS[bid] = not BOT_STATUS[bid]
-        await q.answer(f"Módulo {bid} actualizado")
         
     elif data == "toggle_admin":
         ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
-        estado = "ACTIVADO" if ONLY_ADMIN_MODE else "DESACTIVADO"
-        await q.answer(f"Modo Solo Admin {estado}", show_alert=True)
+        await q.answer(f"Privacidad: {'ACTIVADA' if ONLY_ADMIN_MODE else 'DESACTIVADA'}", show_alert=True)
+
+    elif data == "add_user":
+        WAITING_FOR_ID = True
+        await q.answer("Envíame el ID del usuario...", show_alert=True)
+        return
+
+    elif data == "view_users":
+        if not AUTHORIZED_USERS:
+            await q.answer("No hay usuarios invitados.", show_alert=True)
+            return
+        btns = []
+        for uid, name in AUTHORIZED_USERS.items():
+            btns.append([
+                InlineKeyboardButton(f"👤 {name} ({uid})", callback_data="none"),
+                InlineKeyboardButton(f"❌ Borrar", callback_data=f"del_{uid}")
+            ])
+        btns.append([InlineKeyboardButton("🔙 Volver al Panel", callback_data="refresh")])
+        await q.message.edit_text("📋 **LISTA DE ACCESO PRIVADO:**", reply_markup=InlineKeyboardMarkup(btns))
+        return
+
+    elif data.startswith("del_"):
+        uid_to_del = data.split("_")[1]
+        if uid_to_del in AUTHORIZED_USERS:
+            del AUTHORIZED_USERS[uid_to_del]
+            save_authorized(AUTHORIZED_USERS)
+            await q.answer("Usuario eliminado.")
+            return await manager_callbacks(c, q._replace(data="view_users"))
 
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
-        await q.answer("🚀 Full Startup")
-        
     elif data == "all_off":
         for k in BOT_STATUS: BOT_STATUS[k] = False
-        await q.answer("❄️ System Standby")
-        
-    elif data == "clean_all":
-        # ... (Tu lógica de limpieza existente)
-        await q.answer("🧹 Limpieza realizada")
+    elif data == "refresh":
+        WAITING_FOR_ID = False
 
     try:
         await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
-    except MessageNotModified:
-        pass
+    except MessageNotModified: pass
+
+@app4.on_message(filters.user(ADMIN_ID) & filters.private)
+async def admin_input_handler(client, m):
+    global WAITING_FOR_ID, AUTHORIZED_USERS
+    if WAITING_FOR_ID and m.text:
+        try:
+            target_id = m.text.strip()
+            if target_id.isdigit():
+                if target_id not in AUTHORIZED_USERS:
+                    # Intentamos obtener el nombre real del usuario
+                    try:
+                        user_info = await client.get_users(int(target_id))
+                        name = user_info.first_name or "Desconocido"
+                    except:
+                        name = "Desconocido"
+                    
+                    AUTHORIZED_USERS[target_id] = name
+                    save_authorized(AUTHORIZED_USERS)
+                    await m.reply_text(f"✅ **{name}** (`{target_id}`) autorizado.")
+                else:
+                    await m.reply_text("⚠️ Este ID ya tiene acceso.")
+                WAITING_FOR_ID = False
+                await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+        except Exception as e:
+            await m.reply_text(f"❌ Error: {str(e)}")
 
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(_, m):
     await m.reply_text(get_status_text(), reply_markup=get_main_menu())
 
 # ==========================================
-# FIN DE CONFIGURACIÓN Y PANEL
+# FIN DE CONFIGURACIÓN
 # ==========================================
-
-
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
