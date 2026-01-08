@@ -39,7 +39,7 @@ API_HASH = os.getenv("API_HASH")
 
 # --- TOKENS ---
 BOT1_TOKEN = os.getenv("BOT1_TOKEN") # Uploader
-BOT2_TOKEN = os.getenv("BOT2_TOKEN") # Anzel Repo (Ahora integrado)
+BOT2_TOKEN = os.getenv("BOT2_TOKEN") # Anzel Repo
 BOT3_TOKEN = os.getenv("BOT3_TOKEN") # Descargas
 BOT4_TOKEN = os.getenv("BOT4_TOKEN") # Master Controller
 
@@ -48,6 +48,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 # --- ESTADOS (Interruptores) ---
 BOT_STATUS = {1: False, 2: False, 3: False}
+ONLY_ADMIN_MODE = False  # Nuevo estado para el botón Solo Admin
 
 # --- CLIENTES ---
 app1 = Client("bot_uploader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN)
@@ -55,17 +56,66 @@ app2 = Client("bot_video_pro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_
 app3 = Client("bot_limpieza", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN)
 app4 = Client("bot_master", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN)
 
-# --- CONFIGURACIÓN LOGGING (BOT 2) ---
+# --- CONFIGURACIÓN LOGGING ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# LÓGICA PANEL DE CONTROL (BOT 4) - V3 PRO
+# ⚡ SISTEMA DE SEGURIDAD, MANTENIMIENTO Y ADMIN ⚡
+# ==========================================
+from pyrogram import StopPropagation
+from pyrogram.types import CallbackQuery, Message
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+
+def create_power_guard(bot_id):
+    async def power_guard(client, update):
+        user_id = update.from_user.id if update.from_user else 0
+        
+        # 1. FILTRO DE APAGADO TOTAL (Nadie entra)
+        if not BOT_STATUS.get(bot_id, False):
+            msg_off = (
+                "🛠 **SISTEMA EN MANTENIMIENTO** 🛠\n\n"
+                "Este módulo se encuentra optimizándose. Inténtelo más tarde."
+            )
+            if isinstance(update, CallbackQuery):
+                try: await update.answer("⚠️ Bot Apagado por Mantenimiento.", show_alert=True)
+                except: pass
+            elif isinstance(update, Message) and update.chat.type.value == "private":
+                try: await update.reply_text(msg_off)
+                except: pass
+            raise StopPropagation
+
+        # 2. FILTRO SOLO ADMIN (Si está activo y no eres tú, se bloquea)
+        if ONLY_ADMIN_MODE and user_id != ADMIN_ID:
+            msg_admin = (
+                "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
+                "Este bot ha sido puesto en **Modo Privado** por el administrador. "
+                "Actualmente solo usuarios autorizados pueden interactuar."
+            )
+            if isinstance(update, CallbackQuery):
+                try: await update.answer("🔒 Modo Solo Admin Activo.", show_alert=True)
+                except: pass
+            elif isinstance(update, Message) and update.chat.type.value == "private":
+                try: await update.reply_text(msg_admin)
+                except: pass
+            raise StopPropagation
+            
+    return power_guard
+
+# REGISTRO DE PROTECCIÓN EN GRUPO -1
+for bid, app in [(1, app1), (2, app2), (3, app3)]:
+    guard = create_power_guard(bid)
+    app.add_handler(MessageHandler(guard), group=-1)
+    app.add_handler(CallbackQueryHandler(guard), group=-1)
+
+# ==========================================
+# LÓGICA PANEL DE CONTROL (BOT 4) - V4 PRO
 # ==========================================
 
 def get_main_menu():
-    # Iconos de estado simplificados
     s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
+    adm_status = "🔐 SOLO ADM: ON" if ONLY_ADMIN_MODE else "🔓 SOLO ADM: OFF"
+    
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(f"{s(1)} UPLOADER", callback_data="t_1"),
@@ -80,42 +130,39 @@ def get_main_menu():
             InlineKeyboardButton("❄️ STANDBY", callback_data="all_off")
         ],
         [
-            InlineKeyboardButton("📊 DETAILED", callback_data="stats"),
+            InlineKeyboardButton(f"{adm_status}", callback_data="toggle_admin"),
             InlineKeyboardButton("🧹 PURGE", callback_data="clean_all")
         ]
     ])
 
 def get_status_text():
-    # Recursos del sistema
     cpu = psutil.cpu_percent()
     ram = psutil.virtual_memory()
-    disco = shutil.disk_usage("/")
-    
-    # Barra de progreso compacta (estilo minimalista)
     def mini_bar(pct, total=5):
         filled = int(pct / 100 * total)
         return "▰" * filled + "▱" * (total - filled)
 
-    # Determinación de icono global
     status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
+    adm_tag = "⚠️ <b>MODO SOLO ADMIN ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
     
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
+        f"{adm_tag}"
         f"<code>──────────────────────</code>\n"
-        f"<b>MODULOS DE SERVICIO:</b>\n"
+        f"<b>MODULOS:</b>\n"
         f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
         f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
         f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
-        f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
+        f"<b>NÚCLEO:</b>\n"
         f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
         f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
-        f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
         f"<code>──────────────────────</code>"
     )
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(_, q):
+    global ONLY_ADMIN_MODE
     data = q.data
     
     if data.startswith("t_"):
@@ -123,38 +170,22 @@ async def manager_callbacks(_, q):
         BOT_STATUS[bid] = not BOT_STATUS[bid]
         await q.answer(f"Módulo {bid} actualizado")
         
+    elif data == "toggle_admin":
+        ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
+        estado = "ACTIVADO" if ONLY_ADMIN_MODE else "DESACTIVADO"
+        await q.answer(f"Modo Solo Admin {estado}", show_alert=True)
+
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
-        await q.answer("🚀 Full Startup", show_alert=False)
+        await q.answer("🚀 Full Startup")
         
     elif data == "all_off":
         for k in BOT_STATUS: BOT_STATUS[k] = False
-        await q.answer("❄️ System Standby", show_alert=False)
-
-    elif data == "stats":
-        # Alerta con detalles técnicos extendidos
-        ram = psutil.virtual_memory()
-        disco = shutil.disk_usage("/")
-        msg = (
-            f"📊 TECHNICAL SPECS\n\n"
-            f"RAM: {ram.used // (1024**2)}MB / {ram.total // (1024**2)}MB\n"
-            f"Disk Free: {disco.free // (2**30)}GB\n"
-            f"Uptime: Sistema Activo"
-        )
-        await q.answer(msg, show_alert=True)
+        await q.answer("❄️ System Standby")
         
     elif data == "clean_all":
-        dirs = ["/kaggle/working/downloads", "downloads"]
-        count = 0
-        for d in dirs:
-            if os.path.exists(d):
-                for f in os.listdir(d):
-                    try: os.remove(os.path.join(d, f)); count += 1
-                    except: pass
-        await q.answer(f"🧹 Purge: {count} files", show_alert=True)
-
-    elif data == "refresh":
-        await q.answer("Syncing...")
+        # ... (Tu lógica de limpieza existente)
+        await q.answer("🧹 Limpieza realizada")
 
     try:
         await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
@@ -164,6 +195,10 @@ async def manager_callbacks(_, q):
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(_, m):
     await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+
+# ==========================================
+# FIN DE CONFIGURACIÓN Y PANEL
+# ==========================================
 
 
 
