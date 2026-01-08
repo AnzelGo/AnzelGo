@@ -33,17 +33,18 @@ nest_asyncio.apply()
 # CONFIGURACIÓN GLOBAL Y CONTROLADOR (BOT 4)
 # ==========================================
 
-API_ID = 27047123
-API_HASH = "0433bb3ec4789fcd09cbd3ea11672cd0"
+# Usamos os.getenv para las credenciales de la API de Telegram
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
 
 # --- TOKENS ---
-BOT1_TOKEN = "7598527396:AAFIjIVPbjbXLQnaR5N6F20AhH5d7htQyps" # Uploader
-BOT2_TOKEN = "8390723783:AAH8G-ybpVuKdLbzeu21V0YPcHChHN87f9c" # Anzel Repo (Ahora integrado)
-BOT3_TOKEN = "7668986725:AAHWw2Nj-TGD_iYOxORr3D3LjYBkJFY_E9A" # Descargas
-BOT4_TOKEN = "7585043587:AAFiEqFhlz6a3j3tVrhjZ0DGQNC--24aqQk" # Master Controller
+BOT1_TOKEN = os.getenv("BOT1_TOKEN") # Uploader
+BOT2_TOKEN = os.getenv("BOT2_TOKEN") # Anzel Repo (Ahora integrado)
+BOT3_TOKEN = os.getenv("BOT3_TOKEN") # Descargas
+BOT4_TOKEN = os.getenv("BOT4_TOKEN") # Master Controller
 
 # --- ADMIN ID ---
-ADMIN_ID = 1806990534 
+ADMIN_ID = int(os.getenv("ADMIN_ID")) 
 
 # --- ESTADOS (Interruptores) ---
 BOT_STATUS = {1: False, 2: False, 3: False}
@@ -144,9 +145,9 @@ async def clean_server(_, q):
 # LÓGICA DEL BOT 1 (UPLOADER)
 # ==============================================================================
 
-GOFILE_TOKEN = "3NoqUiPmCteKONpqKLmg8Byv6Z5Oi43s" 
-CATBOX_HASH = "80d3bdc6ff97094ad4529e08d"
-PIXELDRAIN_KEY = "ec5b6e4a-303c-41fd-97aa-b0dfde587634"
+GOFILE_TOKEN = os.getenv("GOFILE_TOKEN") 
+CATBOX_HASH = os.getenv("CATBOX_HASH")
+PIXELDRAIN_KEY = os.getenv("PIXELDRAIN_KEY")
 
 user_preference_c1 = {}
 
@@ -182,7 +183,7 @@ async def upload_file_c1(path, server):
                 except: return None
             elif server == "Pixeldrain":
                 try:
-                    p_key = PIXELDRAIN_KEY.strip() if 'PIXELDRAIN_KEY' in globals() else ""
+                    p_key = PIXELDRAIN_KEY.strip() if PIXELDRAIN_KEY else ""
                     auth = aiohttp.BasicAuth(login="", password=p_key)
                     data = aiohttp.FormData(); data.add_field('file', f, filename=os.path.basename(path))
                     async with s.post("https://pixeldrain.com/api/file", data=data, auth=auth) as r:
