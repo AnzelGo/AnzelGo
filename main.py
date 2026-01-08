@@ -60,41 +60,30 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# EL "CORTACORRIENTE" (BOT 4 ACTÚA SOBRE 1, 2 Y 3)
-# ==========================================
-
-@app1.on_message(group=-1)
-async def lock_bot1(_, m):
-    if not BOT_STATUS[1]: m.stop_propagation()
-
-@app2.on_message(group=-1)
-async def lock_bot2(_, m):
-    # El Bot 2 ahora obedece al interruptor
-    if not BOT_STATUS[2]: m.stop_propagation()
-
-@app3.on_message(group=-1)
-async def lock_bot3(_, m):
-    if not BOT_STATUS[3]: m.stop_propagation()
-
-# ==========================================
 # LÓGICA PANEL DE CONTROL (BOT 4)
 # ==========================================
 
 def get_main_menu():
+    # Usamos iconos más simples y textos cortos para que los botones sean pequeños
     s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"{s(1)} Bot Uploader", callback_data="t_1"),
-         InlineKeyboardButton(f"{s(2)} Bot Compresor (Anzel)", callback_data="t_2")],
-        [InlineKeyboardButton(f"{s(3)} Bot Descargas", callback_data="t_3")],
-        [InlineKeyboardButton("📊 Estado del Servidor", callback_data="stats")],
-        [InlineKeyboardButton("🧹 Limpiar Temporales", callback_data="clean_all")]
+        # Fila 1: Control de bots (Botones lado a lado para ahorrar espacio)
+        [
+            InlineKeyboardButton(f"{s(1)} Uploader", callback_data="t_1"),
+            InlineKeyboardButton(f"{s(2)} Anzel", callback_data="t_2"),
+            InlineKeyboardButton(f"{s(3)} Downloader", callback_data="t_3")
+        ],
+        # Fila 2: Herramientas del sistema
+        [
+            InlineKeyboardButton("📊 Stats", callback_data="stats"),
+            InlineKeyboardButton("🧹 Limpiar", callback_data="clean_all")
+        ]
     ])
 
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(_, m):
     await m.reply_text(
-        "<b>🎛 PANEL DE CONTROL MAESTRO</b>\n\n"
-        "Desde aquí gestionas la actividad de tus bots unificados en un solo sistema.",
+        "<b>🎛 PANEL MAESTRO</b>",
         reply_markup=get_main_menu()
     )
 
@@ -102,8 +91,10 @@ async def start_controller(_, m):
 async def toggle_bots(_, q):
     bid = int(q.data.split("_")[1])
     BOT_STATUS[bid] = not BOT_STATUS[bid]
+    # Editamos solo el teclado para evitar el parpadeo del texto
     await q.message.edit_reply_markup(reply_markup=get_main_menu())
-    await q.answer(f"Bot {bid} {'Activado' if BOT_STATUS[bid] else 'Desactivado'}")
+    status_txt = "ON" if BOT_STATUS[bid] else "OFF"
+    await q.answer(f"Bot {bid}: {status_txt}")
 
 @app4.on_callback_query(filters.regex("stats") & filters.user(ADMIN_ID))
 async def server_stats(_, q):
@@ -111,23 +102,17 @@ async def server_stats(_, q):
     cpu = psutil.cpu_percent()
     disco = shutil.disk_usage("/")
     texto = (
-        "<b>📊 ESTADO DEL SISTEMA</b>\n\n"
-        f"🖥 <b>CPU:</b> {cpu}%\n"
-        f"💾 <b>RAM:</b> {ram.percent}%\n"
-        f"📂 <b>Disco:</b> {disco.used // (2**30)}GB / {disco.total // (2**30)}GB"
+        f"<b>💻 SISTEMA</b>\n"
+        f"<b>CPU:</b> {cpu}% | <b>RAM:</b> {ram.percent}%\n"
+        f"<b>Disco:</b> {disco.used // (2**30)}G / {disco.total // (2**30)}G"
     )
-    await q.answer()
-    await q.message.reply_text(texto)
+    # Enviamos una alerta rápida en lugar de un mensaje nuevo para mantener limpieza
+    await q.answer(f"CPU: {cpu}% | RAM: {ram.percent}%", show_alert=True)
 
 @app4.on_callback_query(filters.regex("clean_all") & filters.user(ADMIN_ID))
 async def clean_server(_, q):
-    # Directorios de los 3 bots
-    DOWNLOAD_DIR_C3 = "/kaggle/working/downloads"
-    DOWNLOAD_DIR_C2 = "downloads" # Del bot 2
-    
+    dirs_to_clean = ["/kaggle/working/downloads", "downloads"]
     count = 0
-    dirs_to_clean = [DOWNLOAD_DIR_C3, DOWNLOAD_DIR_C2]
-    
     for d in dirs_to_clean:
         if os.path.exists(d):
             for f in os.listdir(d):
@@ -137,9 +122,7 @@ async def clean_server(_, q):
                         os.remove(fp)
                         count += 1
                     except: pass
-    
-    await q.answer(f"🧹 Se borraron {count} archivos temporales", show_alert=True)
-
+    await q.answer(f"✨ Limpieza: {count} archivos borrados", show_alert=True)
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
