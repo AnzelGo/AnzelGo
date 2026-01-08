@@ -60,11 +60,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# LÓGICA PANEL DE CONTROL (BOT 4) - PREMIUM
+# LÓGICA PANEL DE CONTROL (BOT 4) - V3 PRO
 # ==========================================
 
 def get_main_menu():
-    # Iconos simplificados para botones pequeños y simétricos
+    # Iconos de estado simplificados
     s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
     return InlineKeyboardMarkup([
         [
@@ -80,40 +80,39 @@ def get_main_menu():
             InlineKeyboardButton("❄️ STANDBY", callback_data="all_off")
         ],
         [
-            InlineKeyboardButton("📊 SYSTEM", callback_data="stats"),
+            InlineKeyboardButton("📊 DETAILED", callback_data="stats"),
             InlineKeyboardButton("🧹 PURGE", callback_data="clean_all")
         ]
     ])
 
 def get_status_text():
-    # Diseño de Dashboard Profesional
-    ram = psutil.virtual_memory().percent
+    # Recursos del sistema
     cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory()
+    disco = shutil.disk_usage("/")
     
-    # Barra de progreso visual para RAM
-    bar_len = 8
-    filled = int(ram / 100 * bar_len)
-    ram_bar = "💊" * filled + "⚪" * (bar_len - filled)
-    
-    status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
+    # Barra de progreso compacta (estilo minimalista)
+    def mini_bar(pct, total=5):
+        filled = int(pct / 100 * total)
+        return "▰" * filled + "▱" * (total - filled)
+
+    # Determinación de icono global
+    status_icon = "🛰" if any(BOT_STATUS.values()) else "💤"
     
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
-        f"<code>────────────────────</code>\n"
-        f"<b>🛰 STATUS RECAP:</b>\n"
-        f"  ├ 1. Uploader    ▸ {'<code>ACTIVE</code>' if BOT_STATUS[1] else '<code>OFFLINE</code>'}\n"
-        f"  ├ 2. Anzel Video ▸ {'<code>ACTIVE</code>' if BOT_STATUS[2] else '<code>OFFLINE</code>'}\n"
-        f"  └ 3. Downloader   ▸ {'<code>ACTIVE</code>' if BOT_STATUS[3] else '<code>OFFLINE</code>'}\n"
-        f"<code>────────────────────</code>\n"
-        f"<b>💻 SERVER RESOURCES:</b>\n"
-        f"  <b>CPU:</b> <code>{cpu}%</code>\n"
-        f"  <b>RAM:</b> <code>[{ram_bar}] {ram}%</code>\n"
-        f"<code>────────────────────</code>"
+        f"<code>──────────────────────</code>\n"
+        f"<b>📡 MODULOS DE SERVICIO:</b>\n"
+        f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
+        f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
+        f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
+        f"<code>──────────────────────</code>\n"
+        f"<b>⚙️ RECURSOS DEL NÚCLEO:</b>\n"
+        f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
+        f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
+        f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
+        f"<code>──────────────────────</code>"
     )
-
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_controller(_, m):
-    await m.reply_text(get_status_text(), reply_markup=get_main_menu())
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(_, q):
@@ -126,15 +125,22 @@ async def manager_callbacks(_, q):
         
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
-        await q.answer("🚀 Full System Startup", show_alert=False)
+        await q.answer("🚀 Full Startup", show_alert=False)
         
     elif data == "all_off":
         for k in BOT_STATUS: BOT_STATUS[k] = False
         await q.answer("❄️ System Standby", show_alert=False)
 
     elif data == "stats":
+        # Alerta con detalles técnicos extendidos
+        ram = psutil.virtual_memory()
         disco = shutil.disk_usage("/")
-        msg = f"📂 STORAGE INFO:\nUsed: {disco.used // (2**30)}GB\nFree: {disco.free // (2**30)}GB\nTotal: {disco.total // (2**30)}GB"
+        msg = (
+            f"📊 TECHNICAL SPECS\n\n"
+            f"RAM: {ram.used // (1024**2)}MB / {ram.total // (1024**2)}MB\n"
+            f"Disk Free: {disco.free // (2**30)}GB\n"
+            f"Uptime: Sistema Activo"
+        )
         await q.answer(msg, show_alert=True)
         
     elif data == "clean_all":
@@ -145,19 +151,19 @@ async def manager_callbacks(_, q):
                 for f in os.listdir(d):
                     try: os.remove(os.path.join(d, f)); count += 1
                     except: pass
-        await q.answer(f"🧹 Purge Complete: {count} files removed", show_alert=True)
+        await q.answer(f"🧹 Purge: {count} files", show_alert=True)
 
     elif data == "refresh":
-        await q.answer("Data Refreshed")
+        await q.answer("Syncing...")
 
-    # Actualización estética sin parpadeo
     try:
-        await q.message.edit_text(
-            get_status_text(), 
-            reply_markup=get_main_menu()
-        )
+        await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
     except MessageNotModified:
         pass
+
+@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
+async def start_controller(_, m):
+    await m.reply_text(get_status_text(), reply_markup=get_main_menu())
 
 
 
