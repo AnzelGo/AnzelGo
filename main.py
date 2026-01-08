@@ -97,17 +97,17 @@ def get_status_text():
         return "▰" * filled + "▱" * (total - filled)
 
     # Determinación de icono global
-    status_icon = "🛰" if any(BOT_STATUS.values()) else "💤"
+    status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
     
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
         f"<code>──────────────────────</code>\n"
-        f"<b>📡 MODULOS DE SERVICIO:</b>\n"
+        f"<b>MODULOS DE SERVICIO:</b>\n"
         f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
         f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
         f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
-        f"<b>⚙️ RECURSOS DEL NÚCLEO:</b>\n"
+        f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
         f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
         f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
         f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
