@@ -273,6 +273,14 @@ async def manager_callbacks(c, q):
 @app4.on_message(filters.user(ADMIN_ID) & filters.private)
 async def admin_input_handler(client, m):
     global WAITING_FOR_ID, AUTHORIZED_USERS
+    
+    # Manejo del comando /start
+    if m.text and m.text.startswith("/start"):
+        WAITING_FOR_ID = False
+        await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+        return
+
+    # Manejo de la entrada de ID
     if WAITING_FOR_ID and m.text:
         ids_found = re.findall(r'\d+', m.text)
         if ids_found:
@@ -294,27 +302,18 @@ async def admin_input_handler(client, m):
         else:
             await m.reply_text("❌ No encontré un ID válido en el mensaje.")
 
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_controller(_, m):
-    await m.reply_text(get_status_text(), reply_markup=get_main_menu())
-
 # --- Lógica de arranque automático ---
 async def startup_notification():
     try:
-        # Iniciamos el cliente de forma temporal para enviar el mensaje
         await app4.start()
         await app4.send_message(
             ADMIN_ID, 
-            "🚀 **SISTEMA REINICIADO**\nEl re-deploy ha finalizado y el bot está activo.\n\n" + get_status_text(), 
+            "🚀 **SISTEMA EN LÍNEA**\nEl bot se ha reiniciado correctamente.\n\n" + get_status_text(), 
             reply_markup=get_main_menu()
         )
         await app4.stop()
     except Exception as e:
         print(f"Error en notificación de arranque: {e}")
-
-# Para ejecutar esto, en tu bloque main final pon:
-# import asyncio
-# asyncio.get_event_loop().run_until_complete(startup_notification())
 
 # ==========================================
 # FIN DE CONFIGURACIÓN
