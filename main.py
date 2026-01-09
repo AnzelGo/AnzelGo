@@ -61,7 +61,7 @@ BOT2_TOKEN = os.getenv("BOT2_TOKEN")
 BOT3_TOKEN = os.getenv("BOT3_TOKEN")
 BOT4_TOKEN = os.getenv("BOT4_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
-ADMIN_USERNAME = "AnzZGTv1"
+ADMIN_USERNAME = "AnzZGTv1" # Tu usuario sin el @
 
 # --- ESTADOS ---
 BOT_STATUS = {1: False, 2: False, 3: False}
@@ -75,6 +75,9 @@ app2 = Client("bot_video_pro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_
 app3 = Client("bot_limpieza", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN)
 app4 = Client("bot_master", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN)
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # ==========================================
 # ⚡ SISTEMA DE SEGURIDAD Y ACCESO PRIVADO ⚡
 # ==========================================
@@ -85,32 +88,44 @@ from pyrogram.handlers import MessageHandler, CallbackQueryHandler
 def create_power_guard(bot_id):
     async def power_guard(client, update):
         user_id = update.from_user.id if update.from_user else 0
+        
+        # 1. FILTRO APAGADO
         if not BOT_STATUS.get(bot_id, False):
-            msg_off = "🛠 **SISTEMA EN MANTENIMIENTO** 🛠\n\nOptimización en curso. Por favor, espere."
+            msg_off = (
+                "🛠 **SISTEMA EN MANTENIMIENTO** 🛠\n\n"
+                "Estimado usuario, este módulo se encuentra actualmente en "
+                "labores de optimización. Por favor, inténtelo más tarde.\n\n"
+                "*Disculpe las molestias.*"
+            )
             if isinstance(update, CallbackQuery):
-                try: await update.answer("⚠️ Módulo APAGADO.", show_alert=True)
+                try: await update.answer("⚠️ Este sistema está APAGADO por mantenimiento.", show_alert=True)
                 except: pass
             elif isinstance(update, Message) and update.chat.type.value == "private":
                 try: await update.reply_text(msg_off)
                 except: pass
             raise StopPropagation
 
+        # 2. FILTRO MODO PRIVADO
         if ONLY_ADMIN_MODE:
             if user_id != ADMIN_ID and str(user_id) not in AUTHORIZED_USERS:
                 msg_priv = (
                     "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                    "Este bot es privado. Solicita acceso al administrador pulsando el botón de abajo."
+                    "Este bot ha sido puesto en **Modo Privado** por el administrador. "
+                    "Actualmente solo usuarios autorizados pueden interactuar.\n\n"
+                    "Pulsa el botón de abajo para solicitar tu acceso."
                 )
                 request_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📩 PEDIR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
+
                 if isinstance(update, CallbackQuery):
-                    try: await update.answer("🔒 Modo Privado Activo.", show_alert=True)
+                    try: await update.answer("🔒 Modo Privado Activo. Acceso denegado.", show_alert=True)
                     except: pass
                 elif isinstance(update, Message) and update.chat.type.value == "private":
                     try: await update.reply_text(msg_priv, reply_markup=request_kb)
                     except: pass
                 raise StopPropagation
+            
     return power_guard
 
 for bid, app in [(1, app1), (2, app2), (3, app3)]:
@@ -157,21 +172,29 @@ def get_main_menu():
     ])
 
 def get_status_text():
-    cpu = psutil.cpu_percent(); ram = psutil.virtual_memory(); disco = shutil.disk_usage("/")
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory()
+    disco = shutil.disk_usage("/")
+    
+    def mini_bar(pct, total=5):
+        filled = int(pct / 100 * total)
+        return "▰" * filled + "▱" * (total - filled)
+
     status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
     adm_tag = "⚠️ <b>MODO PRIVADO ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
     
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
-        f"{adm_tag}<code>──────────────────────</code>\n"
-        f"<b>MODULOS:</b>\n"
+        f"{adm_tag}"
+        f"<code>──────────────────────</code>\n"
+        f"<b>MODULOS DE SERVICIO:</b>\n"
         f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
         f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
         f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
-        f"<b>RECURSOS DEL NÚCLEO:</b>\n"
-        f"  <b>📟 CPU:</b> <code>{cpu}%</code>\n"
-        f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code>\n"
+        f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
+        f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
+        f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
         f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
         f"  <b>⏱ UPTIME:</b> <code>{get_uptime()}</code>\n"
         f"<code>──────────────────────</code>"
@@ -183,7 +206,8 @@ async def manager_callbacks(c, q):
     data = q.data
     
     if data.startswith("t_"):
-        bid = int(data.split("_")[1]); BOT_STATUS[bid] = not BOT_STATUS[bid]
+        bid = int(data.split("_")[1])
+        BOT_STATUS[bid] = not BOT_STATUS[bid]
         
     elif data == "toggle_admin":
         ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
@@ -192,35 +216,46 @@ async def manager_callbacks(c, q):
     elif data == "deploy_kaggle":
         await q.answer("🚀 Iniciando Re-Deploy...", show_alert=True)
         try:
-            # Orden de reinicio a la API de Kaggle
             subprocess.Popen(["kaggle", "kernels", "push", "-k", "."])
             await q.message.edit_text("✅ **Petición de reinicio enviada.**\nKaggle renovará las 12 horas. El bot volverá en 1-2 minutos.")
             return
         except Exception as e:
             await q.answer(f"❌ Error API: {str(e)}", show_alert=True)
 
+    elif data == "add_user":
+        WAITING_FOR_ID = True
+        await q.answer("Envíame el ID del usuario...", show_alert=True)
+        return
+
     elif data == "view_users":
-        if not AUTHORIZED_USERS: return await q.answer("No hay usuarios autorizados.", show_alert=True)
+        if not AUTHORIZED_USERS:
+            await q.answer("No hay usuarios invitados.", show_alert=True)
+            return
         btns = []
         for uid, name in AUTHORIZED_USERS.items():
             btns.append([
                 InlineKeyboardButton(f"👤 {name} ({uid})", callback_data="none"),
-                InlineKeyboardButton("❌", callback_data=f"del_{uid}")
+                InlineKeyboardButton(f"❌ Borrar", callback_data=f"del_{uid}")
             ])
-        btns.append([InlineKeyboardButton("🔙 Volver", callback_data="refresh")])
-        await q.message.edit_text("📋 **LISTA DE ACCESO:**", reply_markup=InlineKeyboardMarkup(btns)); return
+        btns.append([InlineKeyboardButton("🔙 Volver al Panel", callback_data="refresh")])
+        await q.message.edit_text("📋 **LISTA DE ACCESO PRIVADO:**", reply_markup=InlineKeyboardMarkup(btns))
+        return
 
     elif data.startswith("del_"):
         uid_to_del = data.split("_")[1]
         if uid_to_del in AUTHORIZED_USERS:
-            del AUTHORIZED_USERS[uid_to_del]; save_authorized(AUTHORIZED_USERS)
+            del AUTHORIZED_USERS[uid_to_del]
+            save_authorized(AUTHORIZED_USERS)
             await q.answer("Usuario eliminado.")
             return await manager_callbacks(c, q._replace(data="view_users"))
 
     elif data == "clean_all":
-        for d in ["downloads", "/kaggle/working/downloads"]:
+        target_dirs = ["downloads", "/kaggle/working/downloads"]
+        for d in target_dirs:
             if os.path.exists(d):
-                try: shutil.rmtree(d); os.makedirs(d)
+                try:
+                    shutil.rmtree(d)
+                    os.makedirs(d)
                 except: pass
         await q.answer("🧹 Purga Completa", show_alert=True)
 
@@ -228,9 +263,11 @@ async def manager_callbacks(c, q):
         for k in BOT_STATUS: BOT_STATUS[k] = True
     elif data == "all_off":
         for k in BOT_STATUS: BOT_STATUS[k] = False
-    elif data == "refresh": WAITING_FOR_ID = False
+    elif data == "refresh":
+        WAITING_FOR_ID = False
 
-    try: await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
+    try:
+        await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
     except MessageNotModified: pass
 
 @app4.on_message(filters.user(ADMIN_ID) & filters.private)
@@ -243,17 +280,45 @@ async def admin_input_handler(client, m):
             if target_id not in AUTHORIZED_USERS:
                 try:
                     user_info = await client.get_users(int(target_id))
-                    name = user_info.first_name or "Usuario"
-                except: name = "Desconocido"
-                AUTHORIZED_USERS[target_id] = name; save_authorized(AUTHORIZED_USERS)
+                    name = user_info.first_name or "Desconocido"
+                except:
+                    name = "Desconocido"
+                
+                AUTHORIZED_USERS[target_id] = name
+                save_authorized(AUTHORIZED_USERS)
                 await m.reply_text(f"✅ **{name}** (`{target_id}`) autorizado.")
-            else: await m.reply_text("⚠️ Este ID ya tiene acceso.")
+            else:
+                await m.reply_text("⚠️ Este ID ya tiene acceso.")
             WAITING_FOR_ID = False
             await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+        else:
+            await m.reply_text("❌ No encontré un ID válido en el mensaje.")
 
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(_, m):
     await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+
+# --- Lógica de arranque automático ---
+async def startup_notification():
+    try:
+        # Iniciamos el cliente de forma temporal para enviar el mensaje
+        await app4.start()
+        await app4.send_message(
+            ADMIN_ID, 
+            "🚀 **SISTEMA REINICIADO**\nEl re-deploy ha finalizado y el bot está activo.\n\n" + get_status_text(), 
+            reply_markup=get_main_menu()
+        )
+        await app4.stop()
+    except Exception as e:
+        print(f"Error en notificación de arranque: {e}")
+
+# Para ejecutar esto, en tu bloque main final pon:
+# import asyncio
+# asyncio.get_event_loop().run_until_complete(startup_notification())
+
+# ==========================================
+# FIN DE CONFIGURACIÓN
+# ==========================================
 
 
 # ==============================================================================
