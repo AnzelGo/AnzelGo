@@ -1,23 +1,40 @@
 # ==========================================
-# CONFIGURACIÓN GLOBAL Y CONTROLADOR (BOT 4)
+# 1. IMPORTACIONES GLOBALES
 # ==========================================
 import os
-import time
-import subprocess
-import re
-import psutil
-import shutil
-import json
-import logging
 import asyncio
-from datetime import timedelta
-from pyrogram import Client, filters, idle, StopPropagation
-from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler
-from pyrogram.errors import MessageNotModified
+import aiohttp
+import nest_asyncio
+import time
+import uuid
+import json
+import subprocess
+import shutil
+import psutil
+import re
+import logging
+import ffmpeg
+from threading import Thread
+from flask import Flask
 
-# --- INICIO DE CRONÓMETRO ---
-START_TIME = time.time()
+from pyrogram import Client, filters, idle
+from pyrogram.types import (
+    ReplyKeyboardMarkup, KeyboardButton, 
+    InlineKeyboardMarkup, InlineKeyboardButton, 
+    CallbackQuery, Message
+)
+from pyrogram.errors import MessageNotModified, FloodWait
+from yt_dlp import YoutubeDL
+
+# Aplicar nest_asyncio para permitir bucles anidados
+nest_asyncio.apply()
+
+# ==========================================
+# ==========================================
+# CONFIGURACIÓN GLOBAL Y CONTROLADOR (BOT 4)
+# ==========================================
+
+# Archivo persistente para usuarios autorizados
 DB_PATH = "authorized_users.json"
 
 def load_authorized():
@@ -47,14 +64,18 @@ AUTHORIZED_USERS = load_authorized()
 WAITING_FOR_ID = False 
 
 # --- CLIENTES ---
-app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN)
-app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_TOKEN)
-app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN)
-app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN)
+app1 = Client("bot_uploader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN)
+app2 = Client("bot_video_pro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_TOKEN)
+app3 = Client("bot_limpieza", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN)
+app4 = Client("bot_master", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN)
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # ==========================================
-# ⚡ SISTEMA DE SEGURIDAD Y ACCESO PRIVADO
+# ⚡ SISTEMA DE SEGURIDAD Y ACCESO PRIVADO ⚡
 # ==========================================
+
 def create_power_guard(bot_id):
     async def power_guard(client, update):
         user_id = update.from_user.id if update.from_user else 0
@@ -66,7 +87,7 @@ def create_power_guard(bot_id):
                 "labores de optimización. Por favor, inténtelo más tarde."
             )
             if isinstance(update, CallbackQuery):
-                try: await update.answer("⚠️ Este sistema está APAGADO por mantenimiento.", show_alert=True)
+                try: await update.answer("⚠️ Sistema APAGADO.", show_alert=True)
                 except: pass
             elif isinstance(update, Message) and update.chat.type.value == "private":
                 try: await update.reply_text(msg_off)
@@ -77,16 +98,12 @@ def create_power_guard(bot_id):
             if user_id != ADMIN_ID and str(user_id) not in AUTHORIZED_USERS:
                 msg_priv = (
                     "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                    "Este bot ha sido puesto en **Modo Privado**. "
-                    "Solo usuarios autorizados pueden interactuar."
+                    "Este bot está en **Modo Privado**. Solo usuarios autorizados.\n"
                 )
                 request_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📩 PEDIR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
+                    InlineKeyboardButton("📩 SOLICITAR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=ID:%20{user_id}")
                 ]])
-                if isinstance(update, CallbackQuery):
-                    try: await update.answer("🔒 Modo Privado Activo.", show_alert=True)
-                    except: pass
-                elif isinstance(update, Message) and update.chat.type.value == "private":
+                if isinstance(update, Message) and update.chat.type.value == "private":
                     try: await update.reply_text(msg_priv, reply_markup=request_kb)
                     except: pass
                 raise StopPropagation
@@ -100,9 +117,6 @@ for bid, app in [(1, app1), (2, app2), (3, app3)]:
 # ==========================================
 # LÓGICA PANEL DE CONTROL (BOT 4)
 # ==========================================
-
-def get_uptime():
-    return str(timedelta(seconds=int(time.time() - START_TIME)))
 
 def get_main_menu():
     s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
@@ -126,7 +140,7 @@ def get_main_menu():
             InlineKeyboardButton("👥 LISTA", callback_data="view_users")
         ],
         [
-            InlineKeyboardButton("🚀 RE-DEPLOY KAGGLE (12h)", callback_data="deploy_kaggle")
+            InlineKeyboardButton("🚀 KAGGLE REDEPLOY", callback_data="redeploy_session")
         ],
         [
             InlineKeyboardButton("⚡ POWER ON", callback_data="all_on"),
@@ -135,24 +149,30 @@ def get_main_menu():
     ])
 
 def get_status_text():
-    cpu = psutil.cpu_percent(); ram = psutil.virtual_memory(); disco = shutil.disk_usage("/")
-    mini_bar = lambda p: "▰" * int(p/20) + "▱" * (5 - int(p/20))
+    cpu = psutil.cpu_percent()
+    ram = psutil.virtual_memory()
+    disco = shutil.disk_usage("/")
+    
+    def mini_bar(pct, total=5):
+        filled = int(pct / 100 * total)
+        return "▰" * filled + "▱" * (total - filled)
+
     status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
     adm_tag = "⚠️ <b>MODO PRIVADO ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
     
     return (
-        f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n{adm_tag}"
+        f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
+        f"{adm_tag}"
         f"<code>──────────────────────</code>\n"
         f"<b>MODULOS DE SERVICIO:</b>\n"
         f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
         f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
         f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
-        f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
+        f"<b>RECURSOS DEL SISTEMA:</b>\n"
         f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
         f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
         f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
-        f"  <b>⏱ UPTIME:</b> <code>{get_uptime()}</code>\n"
         f"<code>──────────────────────</code>"
     )
 
@@ -162,59 +182,69 @@ async def manager_callbacks(c, q):
     data = q.data
     
     if data.startswith("t_"):
-        bid = int(data.split("_")[1]); BOT_STATUS[bid] = not BOT_STATUS[bid]
+        bid = int(data.split("_")[1])
+        BOT_STATUS[bid] = not BOT_STATUS[bid]
     elif data == "toggle_admin":
         ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
-    elif data == "deploy_kaggle":
-        await q.answer("🚀 Iniciando Re-Deploy...", show_alert=True)
+        await q.answer(f"Privacidad: {'ACTIVADA' if ONLY_ADMIN_MODE else 'DESACTIVADA'}", show_alert=True)
+    elif data == "redeploy_session":
+        await q.answer("🚀 Reiniciando Sesión...", show_alert=True)
+        subprocess.Popen(["kaggle", "kernels", "pull", "-k", os.environ.get('KAGGE_KERNEL_ID', 'current_kernel'), "-p", "."])
         subprocess.Popen(["kaggle", "kernels", "push", "-k", "."])
-        await q.message.edit_text("✅ **Petición de reinicio enviada.**\nKaggle renovará las 12 horas. El bot volverá en 1-2 minutos.")
+        await q.message.edit_text("✅ **Petición de Reinicio Enviada.**\nEl sistema se reiniciará en breve.")
         return
     elif data == "add_user":
-        WAITING_FOR_ID = True; await q.answer("Envíame el ID...", show_alert=True); return
+        WAITING_FOR_ID = True
+        await q.answer("Envíame el ID...", show_alert=True)
+        return
     elif data == "view_users":
-        if not AUTHORIZED_USERS: await q.answer("Lista vacía.", show_alert=True); return
-        btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u,n in AUTHORIZED_USERS.items()]
+        if not AUTHORIZED_USERS:
+            await q.answer("Lista vacía.", show_alert=True)
+            return
+        btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
         btns.append([InlineKeyboardButton("🔙 Volver", callback_data="refresh")])
-        await q.message.edit_text("📋 **LISTA DE ACCESO:**", reply_markup=InlineKeyboardMarkup(btns)); return
+        await q.message.edit_text("📋 **USUARIOS AUTORIZADOS:**", reply_markup=InlineKeyboardMarkup(btns))
+        return
     elif data.startswith("del_"):
-        uid = data.split("_")[1]; AUTHORIZED_USERS.pop(uid, None); save_authorized(AUTHORIZED_USERS)
+        uid = data.split("_")[1]
+        if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
+        return await manager_callbacks(c, q._replace(data="view_users"))
     elif data == "clean_all":
-        for d in ["downloads", "/kaggle/working/downloads"]:
-            if os.path.exists(d): 
-                try: shutil.rmtree(d); os.makedirs(d)
-                except: pass
+        for d in ["downloads", "temp"]:
+            if os.path.exists(d): shutil.rmtree(d); os.makedirs(d)
         await q.answer("🧹 Purga Completa", show_alert=True)
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
     elif data == "all_off":
         for k in BOT_STATUS: BOT_STATUS[k] = False
-    elif data == "refresh": WAITING_FOR_ID = False
 
     try: await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
     except MessageNotModified: pass
 
+@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
+async def start_controller(_, m):
+    # Al tocar /start, responde siempre con el Panel de Control
+    await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+
 @app4.on_message(filters.user(ADMIN_ID) & filters.private)
 async def admin_input_handler(client, m):
     global WAITING_FOR_ID, AUTHORIZED_USERS
-    if m.text and m.text.startswith("/start"):
-        await m.reply_text(get_status_text(), reply_markup=get_main_menu())
-        return
     if WAITING_FOR_ID and m.text:
         ids = re.findall(r'\d+', m.text)
         if ids:
-            uid = ids[-1]; AUTHORIZED_USERS[uid] = "Usuario"; save_authorized(AUTHORIZED_USERS)
-            await m.reply_text(f"✅ ID `{uid}` autorizado."); WAITING_FOR_ID = False
+            target = ids[-1]
+            try:
+                u = await client.get_users(int(target))
+                name = u.first_name
+            except: name = "User"
+            AUTHORIZED_USERS[target] = name
+            save_authorized(AUTHORIZED_USERS)
+            await m.reply_text(f"✅ `{target}` ({name}) autorizado.")
+            WAITING_FOR_ID = False
             await m.reply_text(get_status_text(), reply_markup=get_main_menu())
 
-# --- Función de notificación de arranque (Se llama desde el main) ---
-async def startup_notification():
-    try:
-        await app4.send_message(ADMIN_ID, "🚀 **SISTEMA EN LÍNEA**\nEl bot se ha reiniciado correctamente.\n\n" + get_status_text(), reply_markup=get_main_menu())
-    except: pass
-
 # ==========================================
-# FINAL DEL BLOQUE 4
+# FIN DE CONFIGURACIÓN
 # ==========================================
 
 # ==============================================================================
@@ -880,11 +910,7 @@ async def main():
     await app2.start()
     await app3.start()
     await app4.start()
-
- # --- AÑADE ESTA LÍNEA AQUÍ ---
-    await startup_notification() 
-
-    # -----------------------------
+    
     me1 = await app1.get_me()
     me2 = await app2.get_me()
     me3 = await app3.get_me()
