@@ -1,5 +1,5 @@
 # ==========================================
-# 1.XXX IMPORTACIONES GLOBALES
+# 1. IMPORTACIONES GLOBALES
 # ==========================================
 import os
 import asyncio
@@ -32,9 +32,6 @@ nest_asyncio.apply()
 # ==========================================
 # CONFIGURACIÓN GLOBAL Y CONTROLADOR (BOT 4)
 # ==========================================
-
-# Variable para medir el tiempo de actividad
-START_TIME = time.time()
 
 # Archivo persistente para usuarios autorizados
 DB_PATH = "authorized_users.json"
@@ -110,6 +107,7 @@ def create_power_guard(bot_id):
                     "Actualmente solo usuarios autorizados pueden interactuar.\n\n"
                     "Pulsa el botón de abajo para solicitar tu acceso."
                 )
+                # Creamos el botón que redirige a tu chat con su ID listo para enviar
                 request_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📩 PEDIR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
@@ -133,14 +131,8 @@ for bid, app in [(1, app1), (2, app2), (3, app3)]:
 # LÓGICA PANEL DE CONTROL (BOT 4)
 # ==========================================
 
-def get_readable_time(seconds):
-    m, s = divmod(int(seconds), 60)
-    h, m = divmod(m, 60)
-    return f"{h:02d}h:{m:02d}m:{s:02d}s"
-
 def get_main_menu():
-    """Genera el teclado del panel de control."""
-    s = lambda x: "🟢" if BOT_STATUS.get(x, False) else "🔴"
+    s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
     adm_btn = "🔐 PRIVADO: ON" if ONLY_ADMIN_MODE else "🔓 PRIVADO: OFF"
     
     return InlineKeyboardMarkup([
@@ -163,19 +155,13 @@ def get_main_menu():
         [
             InlineKeyboardButton("⚡ POWER ON", callback_data="all_on"),
             InlineKeyboardButton("❄️ STANDBY", callback_data="all_off")
-        ],
-        [
-            InlineKeyboardButton("⚠️ REINICIAR SERVIDOR", callback_data="restart_kaggle")
         ]
     ])
 
 def get_status_text():
-    """Genera el texto de estado del sistema."""
     cpu = psutil.cpu_percent()
     ram = psutil.virtual_memory()
     disco = shutil.disk_usage("/")
-    uptime_seconds = time.time() - START_TIME
-    uptime_str = get_readable_time(uptime_seconds)
     
     def mini_bar(pct, total=5):
         filled = int(pct / 100 * total)
@@ -189,15 +175,14 @@ def get_status_text():
         f"{adm_tag}"
         f"<code>──────────────────────</code>\n"
         f"<b>MODULOS DE SERVICIO:</b>\n"
-        f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS.get(1, False) else '<code>OFF</code>'}\n"
-        f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS.get(2, False) else '<code>OFF</code>'}\n"
-        f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS.get(3, False) else '<code>OFF</code>'}\n"
+        f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
+        f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
+        f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
         f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
         f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
         f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
         f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
-        f"  <b>⏳ TIME:</b> <code>{uptime_str}</code>\n"
         f"<code>──────────────────────</code>"
     )
 
@@ -217,7 +202,6 @@ async def manager_callbacks(c, q):
     elif data == "add_user":
         WAITING_FOR_ID = True
         await q.answer("Envíame el ID del usuario...", show_alert=True)
-        await c.send_message(q.message.chat.id, "✍️ <b>MODO EDICIÓN:</b>\nPor favor envíame el <b>ID numérico</b> del usuario que deseas autorizar.")
         return
 
     elif data == "view_users":
@@ -243,6 +227,7 @@ async def manager_callbacks(c, q):
             return await manager_callbacks(c, q._replace(data="view_users"))
 
     elif data == "clean_all":
+        # Purga mejorada de directorios
         target_dirs = ["downloads", "/kaggle/working/downloads"]
         cleaned_count = 0
         for d in target_dirs:
@@ -261,32 +246,25 @@ async def manager_callbacks(c, q):
     elif data == "refresh":
         WAITING_FOR_ID = False
 
-    elif data == "restart_kaggle":
-        await q.answer("⚠️ REINICIO SOLICITADO", show_alert=True)
-        try:
-            await q.message.edit_text("♻️ **REINICIANDO KERNEL...**\nEl bot se apagará para reiniciarse automáticamente.")
-        except: pass
-        # Matamos el proceso actual
-        os.kill(os.getpid(), 9)
-
     try:
         await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
     except MessageNotModified: pass
 
-@app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
+@app4.on_message(filters.user(ADMIN_ID) & filters.private)
 async def admin_input_handler(client, m):
-    """Maneja la entrada de texto del admin (para agregar IDs)."""
     global WAITING_FOR_ID, AUTHORIZED_USERS
-    
     if WAITING_FOR_ID and m.text:
+        # Extraer ID por si el admin reenvía el mensaje que le llega del usuario
         ids_found = re.findall(r'\d+', m.text)
         if ids_found:
-            target_id = ids_found[-1]
+            target_id = ids_found[-1] # Toma el último número encontrado (el ID)
             if target_id not in AUTHORIZED_USERS:
                 try:
                     user_info = await client.get_users(int(target_id))
                     name = user_info.first_name or "Desconocido"
-                except: name = "Desconocido"
+                except:
+                    name = "Desconocido"
+                
                 AUTHORIZED_USERS[target_id] = name
                 save_authorized(AUTHORIZED_USERS)
                 await m.reply_text(f"✅ **{name}** (`{target_id}`) autorizado.")
@@ -297,12 +275,13 @@ async def admin_input_handler(client, m):
         else:
             await m.reply_text("❌ No encontré un ID válido en el mensaje.")
 
-# --- COMANDO START DEL CONTROLADOR ---
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_controller(client, m):
-    global WAITING_FOR_ID
-    WAITING_FOR_ID = False
-    await m.reply_text(text=get_status_text(), reply_markup=get_main_menu(), quote=True)
+async def start_controller(_, m):
+    await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+
+# ==========================================
+# FIN DE CONFIGURACIÓN
+# ==========================================
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
