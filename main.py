@@ -1,5 +1,5 @@
 # ==========================================
-# 1.XXX IMPORTACIONES GLOBALES
+# 1. IMPORTACIONES Y CONFIGURACIÓN INICIAL
 # ==========================================
 import os
 import asyncio
@@ -13,7 +13,8 @@ import shutil
 import psutil
 import re
 import logging
-import ffmpeg
+import sys
+from datetime import datetime
 from threading import Thread
 from flask import Flask
 
@@ -26,13 +27,67 @@ from pyrogram.types import (
 from pyrogram.errors import MessageNotModified, FloodWait
 from yt_dlp import YoutubeDL
 
-# Aplicar nest_asyncio para permitir bucles anidados
 nest_asyncio.apply()
+
+# --- CONFIGURACIÓN DE LOGS ---
+logging.basicConfig(level=logging.WARNING)
+logger = logging.getLogger(__name__)
+
+# --- MARCA DE TIEMPO DE INICIO ---
+START_TIME_SYSTEM = datetime.now()
+
+# --- CARGA DE VARIABLES ---
+API_ID = int(os.getenv("API_ID", "0"))
+API_HASH = os.getenv("API_HASH", "")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+# Inicialización de los 4 Apps (Bots)
+app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"))
+app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"))
+app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"))
+app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"))
+
+# Variables de Estado Globales
+BOT_STATUS = {1: True, 2: True, 3: True, 4: True}
+ONLY_ADMIN_MODE = False
+WAITING_FOR_ID = False
+
+# Cargar usuarios autorizados desde el archivo si existe
+AUTH_FILE = "authorized_users.json"
+if os.path.exists(AUTH_FILE):
+    try:
+        with open(AUTH_FILE, "r") as f:
+            AUTHORIZED_USERS = json.load(f)
+    except:
+        AUTHORIZED_USERS = {}
+else:
+    AUTHORIZED_USERS = {}
 
 # ==========================================
 # LÓGICA PANEL DE CONTROL (BOT 4) - V. KAGGLE REBOOT
 # ==========================================
-import sys
+
+def get_uptime():
+    """Calcula el tiempo que lleva encendido el script."""
+    delta = datetime.now() - START_TIME_SYSTEM
+    hours, remainder = divmod(int(delta.total_seconds()), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    days, hours = divmod(hours, 24)
+    
+    parts = []
+    if days > 0: parts.append(f"{days}d")
+    if hours > 0: parts.append(f"{hours}h")
+    if minutes > 0: parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+def save_authorized(users_dict):
+    """Guarda la lista de usuarios autorizados en un archivo JSON."""
+    try:
+        with open(AUTH_FILE, "w") as f:
+            json.dump(users_dict, f)
+    except Exception as e:
+        logger.error(f"Error guardando usuarios: {e}")
 
 def setup_kaggle_credentials():
     """Configura las credenciales de Kaggle desde variables de entorno."""
@@ -57,7 +112,7 @@ def trigger_new_version():
         "enable_gpu": "true", "enable_internet": "true"
     }
     with open("kernel-metadata.json", "w") as f: json.dump(meta, f)
-    # Intentar guardar el código actual como main.py antes del push
+    
     try: shutil.copy(__file__, "main.py")
     except: pass
     
@@ -86,12 +141,15 @@ def get_status_text():
     mini_bar = lambda pct: ("▰" * int(pct/20)) + ("▱" * (5 - int(pct/20)))
     status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
     adm_tag = "⚠️ <b>MODO PRIVADO ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
+    uptime = get_uptime()
+    
     return (f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n{adm_tag}"
             f"<code>──────────────────────</code>\n"
             f"<b>RECURSOS DEL NÚCLEO:</b>\n"
             f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
             f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
             f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
+            f"  <b>⏱️ UPTIME:</b> <code>{uptime}</code>\n"
             f"<code>──────────────────────</code>")
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
@@ -110,12 +168,14 @@ async def manager_callbacks(c, q):
         return
     elif data == "view_users":
         if not AUTHORIZED_USERS: return await q.answer("Sin invitados.", show_alert=True)
-        btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="n"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
+        btns = [[InlineKeyboardButton(f"👤 {u}", callback_data="n"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u in AUTHORIZED_USERS.keys()]
         btns.append([InlineKeyboardButton("🔙 Volver", callback_data="refresh")])
         await q.message.edit_text("📋 **LISTA DE ACCESO:**", reply_markup=InlineKeyboardMarkup(btns)); return
     elif data.startswith("del_"):
         uid = data.split("_")[1]
-        if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
+        if uid in AUTHORIZED_USERS: 
+            del AUTHORIZED_USERS[uid]
+            save_authorized(AUTHORIZED_USERS)
         return await manager_callbacks(c, q._replace(data="view_users"))
     elif data == "clean_all":
         for d in ["downloads", "/kaggle/working/downloads"]:
@@ -131,12 +191,33 @@ async def manager_callbacks(c, q):
         if setup_kaggle_credentials():
             res = trigger_new_version()
             await status_msg.edit_text(res)
-            if "✅" in res: await asyncio.sleep(10); sys.exit(0)
+            if "✅" in res: 
+                await asyncio.sleep(10)
+                sys.exit(0)
         else:
             await status_msg.edit_text("❌ <b>ERROR:</b> Credenciales KAGGLE_USERNAME o KAGGLE_KEY no configuradas.")
-    elif data == "refresh": WAITING_FOR_ID = False
-    try: await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
-    except MessageNotModified: pass
+    elif data == "refresh": 
+        WAITING_FOR_ID = False
+    
+    try: 
+        await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
+    except MessageNotModified: 
+        pass
+
+@app4.on_message(filters.user(ADMIN_ID) & filters.text)
+async def handle_admin_input(c, m):
+    global WAITING_FOR_ID, AUTHORIZED_USERS
+    if WAITING_FOR_ID:
+        new_id = m.text.strip()
+        if new_id.isdigit():
+            AUTHORIZED_USERS[new_id] = "Invitado"
+            save_authorized(AUTHORIZED_USERS)
+            WAITING_FOR_ID = False
+            await m.reply_text(f"✅ ID <code>{new_id}</code> agregado a la lista.")
+            await c.send_message(m.chat.id, get_status_text(), reply_markup=get_main_menu())
+        else:
+            await m.reply_text("❌ ID inválido. Debe ser numérico.")
+
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
