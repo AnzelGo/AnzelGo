@@ -62,6 +62,13 @@ ONLY_ADMIN_MODE = False
 AUTHORIZED_USERS = load_authorized() 
 WAITING_FOR_ID = False 
 
+# Variable para caché de red (Cálculo de velocidad)
+NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
+
+# Variable para caché de mensajes de estado (Para borrar el anterior)
+# Estructura: {chat_id: message_id}
+STATUS_MSG_CACHE = {}
+
 # --- CLIENTES ---
 app1 = Client("bot_uploader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN)
 app2 = Client("bot_video_pro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_TOKEN)
@@ -86,12 +93,12 @@ def create_power_guard(bot_id):
         if not BOT_STATUS.get(bot_id, False):
             msg_off = (
                 "🛠 **SISTEMA EN MANTENIMIENTO** 🛠\n\n"
-                "Estimado usuario, este módulo se encuentra actualmente en "
-                "labores de optimización. Por favor, inténtelo más tarde.\n\n"
+                "Estimado usuario, este servicio se encuentra temporalmente "
+                "fuera de línea por optimización. Intente más tarde.\n\n"
                 "*Disculpe las molestias.*"
             )
             if isinstance(update, CallbackQuery):
-                try: await update.answer("⚠️ Este sistema está APAGADO por mantenimiento.", show_alert=True)
+                try: await update.answer("⚠️ Mantenimiento Activo.", show_alert=True)
                 except: pass
             elif isinstance(update, Message) and update.chat.type.value == "private":
                 try: await update.reply_text(msg_off)
@@ -103,17 +110,16 @@ def create_power_guard(bot_id):
             if user_id != ADMIN_ID and str(user_id) not in AUTHORIZED_USERS:
                 msg_priv = (
                     "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                    "Este bot ha sido puesto en **Modo Privado** por el administrador. "
-                    "Actualmente solo usuarios autorizados pueden interactuar.\n\n"
-                    "Pulsa el botón de abajo para solicitar tu acceso."
+                    "Este bot está operando en **Modo Privado** (Prioridad Premium). "
+                    "Actualmente solo usuarios autorizados tienen acceso.\n\n"
+                    "Pulsa abajo para solicitar acceso al administrador."
                 )
-                # Creamos el botón que redirige a tu chat con su ID listo para enviar
                 request_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📩 PEDIR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
 
                 if isinstance(update, CallbackQuery):
-                    try: await update.answer("🔒 Modo Privado Activo. Acceso denegado.", show_alert=True)
+                    try: await update.answer("🔒 Acceso Denegado.", show_alert=True)
                     except: pass
                 elif isinstance(update, Message) and update.chat.type.value == "private":
                     try: await update.reply_text(msg_priv, reply_markup=request_kb)
@@ -130,6 +136,49 @@ for bid, app in [(1, app1), (2, app2), (3, app3)]:
 # ==========================================
 # LÓGICA PANEL DE CONTROL (BOT 4)
 # ==========================================
+
+async def notify_users(bot_id, event_type):
+    """
+    Envía notificaciones de estado a los usuarios activos y borra el mensaje anterior.
+    event_type: 'maintenance', 'online', 'private', 'public'
+    """
+    client_map = {1: app1, 2: app2, 3: app3}
+    client = client_map.get(bot_id)
+    if not client: return
+
+    # Textos de notificación
+    msgs = {
+        "maintenance": "🛠 **AVISO DE SISTEMA**\nEl servicio ha entrado en mantenimiento. Por favor intente más tarde.",
+        "online": "✅ **SERVICIO RESTAURADO**\nEl bot está en línea nuevamente. Modo Gratuito activo.",
+        "private": "🔒 **CAMBIO DE ESTADO**\nEl servicio ha pasado a MODO PRIVADO. Prioridad para usuarios Premium.",
+        "public": "🔓 **MODO PÚBLICO**\nEl servicio está abierto para todos nuevamente."
+    }
+    text = msgs.get(event_type, "⚠️ Cambio de estado.")
+
+    # Identificar usuarios activos (usando las variables globales de cada bot)
+    active_users = []
+    if bot_id == 1:
+        active_users = list(globals().get("user_preference_c1", {}).keys())
+    elif bot_id == 2:
+        active_users = list(globals().get("user_data_c2", {}).keys())
+    elif bot_id == 3:
+        # Bot 3 usa chat_messages como historial reciente
+        active_users = list(globals().get("chat_messages_c3", {}).keys())
+
+    # Enviar mensaje y limpiar el anterior
+    for chat_id in active_users:
+        try:
+            # Borrar mensaje anterior si existe en caché
+            if chat_id in STATUS_MSG_CACHE:
+                try:
+                    await client.delete_messages(chat_id, STATUS_MSG_CACHE[chat_id])
+                except: pass
+            
+            # Enviar nuevo mensaje
+            sent = await client.send_message(chat_id, text)
+            STATUS_MSG_CACHE[chat_id] = sent.id
+        except:
+            pass # Si el usuario bloqueó el bot, ignoramos
 
 def get_main_menu():
     """Genera el teclado del panel de control."""
@@ -159,8 +208,18 @@ def get_main_menu():
         ]
     ])
 
+def format_speed(bytes_sec):
+    if bytes_sec < 1024: return f"{bytes_sec} B/s"
+    elif bytes_sec < 1024**2: return f"{bytes_sec/1024:.1f} KB/s"
+    else: return f"{bytes_sec/1024**2:.1f} MB/s"
+
+def format_total(bytes_num):
+    if bytes_num < 1024**3: return f"{bytes_num/1024**2:.1f} MB"
+    return f"{bytes_num/1024**3:.2f} GB"
+
 def get_status_text():
     """Genera el texto de estado del sistema."""
+    # 1. Recursos Básicos
     cpu = psutil.cpu_percent()
     ram = psutil.virtual_memory()
     disco = shutil.disk_usage("/")
@@ -172,6 +231,35 @@ def get_status_text():
     status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
     adm_tag = "⚠️ <b>MODO PRIVADO ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
     
+    # 2. Monitor de Red (Velocidad y Totales)
+    net = psutil.net_io_counters()
+    now = time.time()
+    
+    # Cálculo de velocidad (Delta)
+    delta_time = now - NET_CACHE['last_time']
+    if delta_time > 0:
+        upload_speed = (net.bytes_sent - NET_CACHE['last_sent']) / delta_time
+        download_speed = (net.bytes_recv - NET_CACHE['last_recv']) / delta_time
+    else:
+        upload_speed, download_speed = 0, 0
+    
+    # Actualizar caché
+    NET_CACHE['last_sent'] = net.bytes_sent
+    NET_CACHE['last_recv'] = net.bytes_recv
+    NET_CACHE['last_time'] = now
+
+    # 3. Datos de Usuarios Activos (Detectar actividad en variables globales)
+    users_c1 = globals().get("user_preference_c1", {})
+    users_c2 = globals().get("user_data_c2", {})
+    users_c3 = globals().get("chat_messages_c3", {})
+
+    active_count = len(set(list(users_c1.keys()) + list(users_c2.keys()) + list(users_c3.keys())))
+    
+    # Iconos de actividad por bot
+    act_1 = "⚡" if len(users_c1) > 0 else "💤"
+    act_2 = "⚡" if len(users_c2) > 0 else "💤"
+    act_3 = "⚡" if len(users_c3) > 0 else "💤"
+
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
         f"{adm_tag}"
@@ -181,12 +269,36 @@ def get_status_text():
         f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS.get(2, False) else '<code>OFF</code>'}\n"
         f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS.get(3, False) else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
-        f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
+        f"<b>RECURSOS DEL NÚCLEO:</b>\n"
         f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
         f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
         f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
+        f"<code>──────────────────────</code>\n"
+        f"<b>📊 MONITOR DE RED (LIVE):</b>\n"
+        f"  ⬆️ <b>Subida:</b> <code>{format_speed(upload_speed)}</code>\n"
+        f"  ⬇️ <b>Bajada:</b> <code>{format_speed(download_speed)}</code>\n"
+        f"  📦 <b>Total:</b> <code>{format_total(net.bytes_sent + net.bytes_recv)}</code>\n"
+        f"  👥 <b>Usuarios Activos:</b> <code>{active_count}</code>\n\n"
+        f"<b>🤖 ACTIVIDAD ACTUAL:</b>\n"
+        f"  [UP: {act_1}]  [PRO: {act_2}]  [DL: {act_3}]\n"
         f"<code>──────────────────────</code>"
     )
+
+async def live_status_loop(client, chat_id, message_id):
+    """Tarea de fondo para actualizar el panel automáticamente."""
+    error_count = 0
+    while True:
+        try:
+            await asyncio.sleep(3) # Actualiza cada 3 segundos
+            new_text = get_status_text()
+            await client.edit_message_text(chat_id, message_id, new_text, reply_markup=get_main_menu())
+            error_count = 0 
+        except MessageNotModified:
+            continue
+        except Exception as e:
+            error_count += 1
+            if error_count > 5: break
+            await asyncio.sleep(5)
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
@@ -195,16 +307,24 @@ async def manager_callbacks(c, q):
     
     if data.startswith("t_"):
         bid = int(data.split("_")[1])
-        BOT_STATUS[bid] = not BOT_STATUS[bid]
+        new_state = not BOT_STATUS[bid]
+        BOT_STATUS[bid] = new_state
+        # Notificar cambio
+        event = "online" if new_state else "maintenance"
+        asyncio.create_task(notify_users(bid, event))
         
     elif data == "toggle_admin":
         ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
+        # Notificar a todos los bots activos el cambio de modo
+        event = "private" if ONLY_ADMIN_MODE else "public"
+        for i in [1, 2, 3]:
+            if BOT_STATUS[i]: # Solo notificar si el bot está encendido
+                 asyncio.create_task(notify_users(i, event))
         await q.answer(f"Privacidad: {'ACTIVADA' if ONLY_ADMIN_MODE else 'DESACTIVADA'}", show_alert=True)
 
     elif data == "add_user":
         WAITING_FOR_ID = True
         await q.answer("Envíame el ID del usuario...", show_alert=True)
-        # Enviamos un mensaje nuevo para que sea evidente
         await c.send_message(q.message.chat.id, "✍️ <b>MODO EDICIÓN:</b>\nPor favor envíame el <b>ID numérico</b> del usuario que deseas autorizar.")
         return
 
@@ -231,22 +351,28 @@ async def manager_callbacks(c, q):
             return await manager_callbacks(c, q._replace(data="view_users"))
 
     elif data == "clean_all":
-        # Purga mejorada de directorios
         target_dirs = ["downloads", "/kaggle/working/downloads"]
         cleaned_count = 0
         for d in target_dirs:
             if os.path.exists(d):
                 try:
-                    shutil.rmtree(d)
-                    os.makedirs(d)
+                    shutil.rmtree(d); os.makedirs(d)
                     cleaned_count += 1
                 except: pass
         await q.answer(f"🧹 Purga Completa: {cleaned_count} directorios reseteados", show_alert=True)
 
     elif data == "all_on":
-        for k in BOT_STATUS: BOT_STATUS[k] = True
+        for k in BOT_STATUS:
+            if not BOT_STATUS[k]: # Si estaba apagado, lo encendemos y notificamos
+                BOT_STATUS[k] = True
+                asyncio.create_task(notify_users(k, "online"))
+    
     elif data == "all_off":
-        for k in BOT_STATUS: BOT_STATUS[k] = False
+        for k in BOT_STATUS:
+            if BOT_STATUS[k]: # Si estaba encendido, lo apagamos y notificamos
+                BOT_STATUS[k] = False
+                asyncio.create_task(notify_users(k, "maintenance"))
+
     elif data == "refresh":
         WAITING_FOR_ID = False
 
@@ -260,10 +386,9 @@ async def admin_input_handler(client, m):
     global WAITING_FOR_ID, AUTHORIZED_USERS
     
     if WAITING_FOR_ID and m.text:
-        # Extraer ID por si el admin reenvía el mensaje que le llega del usuario
         ids_found = re.findall(r'\d+', m.text)
         if ids_found:
-            target_id = ids_found[-1] # Toma el último número encontrado (el ID)
+            target_id = ids_found[-1]
             if target_id not in AUTHORIZED_USERS:
                 try:
                     user_info = await client.get_users(int(target_id))
@@ -278,8 +403,8 @@ async def admin_input_handler(client, m):
                 await m.reply_text("⚠️ Este ID ya tiene acceso.")
             
             WAITING_FOR_ID = False
-            # Volver a mostrar el panel
-            await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+            sent_msg = await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+            asyncio.create_task(live_status_loop(client, sent_msg.chat.id, sent_msg.id))
         else:
             await m.reply_text("❌ No encontré un ID válido en el mensaje. Intenta enviar solo el número.")
 
@@ -287,15 +412,17 @@ async def admin_input_handler(client, m):
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(client, m):
     """Inicia el panel de control."""
-    # Reseteamos bandera de espera por si acaso
     global WAITING_FOR_ID
     WAITING_FOR_ID = False
     
-    await m.reply_text(
+    sent_msg = await m.reply_text(
         text=get_status_text(),
         reply_markup=get_main_menu(),
         quote=True
     )
+    
+    # 🔥 INICIAMOS EL BUCLE DE AUTO-ACTUALIZACIÓN 🔥
+    asyncio.create_task(live_status_loop(client, sent_msg.chat.id, sent_msg.id))
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
