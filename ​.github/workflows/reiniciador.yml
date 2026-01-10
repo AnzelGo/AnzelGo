@@ -1,24 +1,26 @@
 name: Reiniciador Kaggle Manual
 
 on:
-  workflow_dispatch: # Esto habilita el botón de "Run workflow" manual
+  workflow_dispatch: # Permite el botón manual en GitHub Actions
+  # schedule:
+  #   - cron: "0 */9 * * *" # Si quitas el '#' de estas dos líneas, será automático cada 9 horas
 
 jobs:
   run-kernel:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout del código
         uses: actions/checkout@v3
 
-      - name: Setup Python
+      - name: Configurar Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - name: Install Kaggle API
+      - name: Instalar API de Kaggle
         run: pip install kaggle
 
-      - name: Configure Kaggle Credentials
+      - name: Configurar Credenciales
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
@@ -27,5 +29,7 @@ jobs:
           echo "{\"username\":\"$KAGGLE_USERNAME\",\"key\":\"$KAGGLE_KEY\"}" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
 
-      - name: Push to Kaggle (Restart)
-        run: kaggle kernels push -p .
+      - name: Reiniciar Notebook en Kaggle
+        run: |
+          # Esto sube el código y fuerza el inicio de una nueva sesión de 12 horas
+          kaggle kernels push -p .
