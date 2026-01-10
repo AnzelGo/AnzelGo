@@ -7,18 +7,14 @@ jobs:
   run-kernel:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del codigo
-        uses: actions/checkout@v3
-
-      - name: Configurar Python
+      - uses: actions/checkout@v3
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
-      - name: Instalar Kaggle
+      - name: Install Kaggle
         run: pip install kaggle
-
-      - name: Ejecutar Reinicio
+      - name: Reiniciar Bot
         env:
           KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
           KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
@@ -26,4 +22,5 @@ jobs:
           mkdir -p ~/.kaggle
           echo "{\"username\":\"$KAGGLE_USERNAME\",\"key\":\"$KAGGLE_KEY\"}" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
+          # Esto fuerza a Kaggle a detener todo y arrancar de cero
           kaggle kernels push -p .
