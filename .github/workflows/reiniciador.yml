@@ -22,5 +22,5 @@ jobs:
           mkdir -p ~/.kaggle
           echo "{\"username\":\"$KAGGLE_USERNAME\",\"key\":\"$KAGGLE_KEY\"}" > ~/.kaggle/kaggle.json
           chmod 600 ~/.kaggle/kaggle.json
-          # Esto fuerza a Kaggle a detener todo y arrancar de cero
+          # El push fuerza la actualización y reinicio de la instancia
           kaggle kernels push -p .
