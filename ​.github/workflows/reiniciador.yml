@@ -1,9 +1,7 @@
-name: Reiniciador Kaggle 24-7
+name: Reiniciador Kaggle Manual
 
 on:
-  schedule:
-    - cron: "0 */9 * * *"
-  workflow_dispatch:
+  workflow_dispatch: # Esto habilita el botón de "Run workflow" manual
 
 jobs:
   run-kernel:
