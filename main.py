@@ -1,5 +1,5 @@
 # ==========================================
-# 1. IMPORTACIONES GLOBALES
+# 1.XXX IMPORTACIONES GLOBALES
 # ==========================================
 import os
 import asyncio
@@ -132,7 +132,8 @@ for bid, app in [(1, app1), (2, app2), (3, app3)]:
 # ==========================================
 
 def get_main_menu():
-    s = lambda x: "🟢" if BOT_STATUS[x] else "🔴"
+    """Genera el teclado del panel de control."""
+    s = lambda x: "🟢" if BOT_STATUS.get(x, False) else "🔴"
     adm_btn = "🔐 PRIVADO: ON" if ONLY_ADMIN_MODE else "🔓 PRIVADO: OFF"
     
     return InlineKeyboardMarkup([
@@ -159,6 +160,7 @@ def get_main_menu():
     ])
 
 def get_status_text():
+    """Genera el texto de estado del sistema."""
     cpu = psutil.cpu_percent()
     ram = psutil.virtual_memory()
     disco = shutil.disk_usage("/")
@@ -175,9 +177,9 @@ def get_status_text():
         f"{adm_tag}"
         f"<code>──────────────────────</code>\n"
         f"<b>MODULOS DE SERVICIO:</b>\n"
-        f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS[1] else '<code>OFF</code>'}\n"
-        f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS[2] else '<code>OFF</code>'}\n"
-        f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS[3] else '<code>OFF</code>'}\n"
+        f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS.get(1, False) else '<code>OFF</code>'}\n"
+        f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS.get(2, False) else '<code>OFF</code>'}\n"
+        f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS.get(3, False) else '<code>OFF</code>'}\n"
         f"<code>──────────────────────</code>\n"
         f"<b>RECURSOS ACTUALES DEL NÚCLEO:</b>\n"
         f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
@@ -202,6 +204,8 @@ async def manager_callbacks(c, q):
     elif data == "add_user":
         WAITING_FOR_ID = True
         await q.answer("Envíame el ID del usuario...", show_alert=True)
+        # Enviamos un mensaje nuevo para que sea evidente
+        await c.send_message(q.message.chat.id, "✍️ <b>MODO EDICIÓN:</b>\nPor favor envíame el <b>ID numérico</b> del usuario que deseas autorizar.")
         return
 
     elif data == "view_users":
@@ -250,9 +254,11 @@ async def manager_callbacks(c, q):
         await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
     except MessageNotModified: pass
 
-@app4.on_message(filters.user(ADMIN_ID) & filters.private)
+@app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
 async def admin_input_handler(client, m):
+    """Maneja la entrada de texto del admin (para agregar IDs)."""
     global WAITING_FOR_ID, AUTHORIZED_USERS
+    
     if WAITING_FOR_ID and m.text:
         # Extraer ID por si el admin reenvía el mensaje que le llega del usuario
         ids_found = re.findall(r'\d+', m.text)
@@ -270,18 +276,26 @@ async def admin_input_handler(client, m):
                 await m.reply_text(f"✅ **{name}** (`{target_id}`) autorizado.")
             else:
                 await m.reply_text("⚠️ Este ID ya tiene acceso.")
+            
             WAITING_FOR_ID = False
+            # Volver a mostrar el panel
             await m.reply_text(get_status_text(), reply_markup=get_main_menu())
         else:
-            await m.reply_text("❌ No encontré un ID válido en el mensaje.")
+            await m.reply_text("❌ No encontré un ID válido en el mensaje. Intenta enviar solo el número.")
 
+# --- COMANDO START DEL CONTROLADOR ---
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_controller(_, m):
-    await m.reply_text(get_status_text(), reply_markup=get_main_menu())
-
-# ==========================================
-# FIN DE CONFIGURACIÓN
-# ==========================================
+async def start_controller(client, m):
+    """Inicia el panel de control."""
+    # Reseteamos bandera de espera por si acaso
+    global WAITING_FOR_ID
+    WAITING_FOR_ID = False
+    
+    await m.reply_text(
+        text=get_status_text(),
+        reply_markup=get_main_menu(),
+        quote=True
+    )
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
