@@ -153,23 +153,18 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    # --- LOGICA DE ACTIVIDAD TEMPORAL (TIMEOUT) ---
+    # --- DETECCIÓN DE ACTIVIDAD REAL FILTRADA ---
     u1 = globals().get("user_preference_c1", {})
     u2 = globals().get("user_data_c2", {})
     u3 = globals().get("chat_messages_c3", {})
     
-    # Función para detectar si hubo cambios recientes (simula actividad real)
-    def check_act(dic):
-        if not dic: return "💤"
-        # Si la red detecta movimiento significativo, asumimos actividad en los diccionarios cargados
-        return "⚡" if (up_s > 500 or down_s > 500) and len(dic) > 0 else "💤"
-
-    # PRO usa su lógica interna que ya funciona bien
-    act_1 = check_act(u1)
-    act_2 = "⚡" if u2 and len(u2) > 0 else "💤"
-    act_3 = check_act(u3)
+    # Solo muestra Rayo si el bot tiene usuarios y hay tráfico real en la red
+    act_1 = "⚡" if u1 and (up_s > 1000 or down_s > 1000) else "💤"
+    act_2 = "⚡" if u2 and len(u2) > 0 else "💤" # PRO se queda igual porque está bien
+    act_3 = "⚡" if u3 and (up_s > 1000 or down_s > 1000) else "💤"
     
-    active_count = len(set(list(u1.keys()) + list(u2.keys()) + list(u3.keys())))
+    # Usuarios con procesos reales
+    active_count = len([k for k, v in u2.items() if v]) + (1 if act_1 == "⚡" else 0) + (1 if act_3 == "⚡" else 0)
 
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
