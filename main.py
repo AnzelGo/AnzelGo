@@ -54,7 +54,7 @@ BOT2_TOKEN = os.getenv("BOT2_TOKEN")
 BOT3_TOKEN = os.getenv("BOT3_TOKEN")
 BOT4_TOKEN = os.getenv("BOT4_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
-ADMIN_USERNAME = "AnzZGTv1"
+ADMIN_USERNAME = "AnzZGTv1" # Tu usuario sin el @
 
 # --- ESTADOS ---
 BOT_STATUS = {1: False, 2: False, 3: False}
@@ -62,7 +62,7 @@ ONLY_ADMIN_MODE = False
 AUTHORIZED_USERS = load_authorized() 
 WAITING_FOR_ID = False 
 
-# Variable para caché de red (Cálculo de velocidad)
+# Variable para caché de red y mensajes
 NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
 STATUS_MSG_CACHE = {}
 
@@ -86,12 +86,9 @@ def create_power_guard(bot_id):
     async def power_guard(client, update):
         user_id = update.from_user.id if update.from_user else 0
         if not BOT_STATUS.get(bot_id, False):
-            msg_off = (
-                "🛠 **SISTEMA EN MANTENIMIENTO** 🛠\n\n"
-                "Estimado usuario, este servicio se encuentra temporalmente "
-                "fuera de línea por optimización. Intente más tarde.\n\n"
-                "*Disculpe las molestias.*"
-            )
+            msg_off = ("🛠 **SISTEMA EN MANTENIMIENTO** 🛠\n\n"
+                       "Estimado usuario, este servicio se encuentra temporalmente "
+                       "fuera de línea por optimización. Intente más tarde.")
             if isinstance(update, CallbackQuery):
                 try: await update.answer("⚠️ Mantenimiento Activo.", show_alert=True)
                 except: pass
@@ -102,12 +99,8 @@ def create_power_guard(bot_id):
 
         if ONLY_ADMIN_MODE:
             if user_id != ADMIN_ID and str(user_id) not in AUTHORIZED_USERS:
-                msg_priv = (
-                    "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                    "Este bot está operando en **Modo Privado** (Prioridad Premium). "
-                    "Actualmente solo usuarios autorizados tienen acceso.\n\n"
-                    "Pulsa abajo para solicitar acceso al administrador."
-                )
+                msg_priv = ("🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
+                            "Este bot está operando en **Modo Privado**. Solo usuarios autorizados tienen acceso.")
                 request_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📩 PEDIR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
@@ -134,16 +127,17 @@ async def notify_users(bot_id, event_type):
     client = client_map.get(bot_id)
     if not client: return
     msgs = {
-        "maintenance": "🛠 **AVISO DE SISTEMA**\nEl servicio ha entrado en mantenimiento. Por favor intente más tarde.",
+        "maintenance": "🛠 **AVISO DE SISTEMA**\nEl servicio ha entrado en mantenimiento.",
         "online": "✅ **SERVICIO RESTAURADO**\nEl bot está en línea nuevamente. Modo Gratuito activo.",
-        "private": "🔒 **CAMBIO DE ESTADO**\nEl servicio ha pasado a MODO PRIVADO. Prioridad para usuarios Premium.",
+        "private": "🔒 **CAMBIO DE ESTADO**\nEl servicio ha pasado a MODO PRIVADO.",
         "public": "🔓 **MODO PÚBLICO**\nEl servicio está abierto para todos nuevamente."
     }
     text = msgs.get(event_type, "⚠️ Cambio de estado.")
+    u1 = globals().get("user_preference_c1", {}); u2 = globals().get("user_data_c2", {}); u3 = globals().get("chat_messages_c3", {})
     active_users = []
-    if bot_id == 1: active_users = list(globals().get("user_preference_c1", {}).keys())
-    elif bot_id == 2: active_users = list(globals().get("user_data_c2", {}).keys())
-    elif bot_id == 3: active_users = list(globals().get("chat_messages_c3", {}).keys())
+    if bot_id == 1: active_users = list(u1.keys())
+    elif bot_id == 2: active_users = list(u2.keys())
+    elif bot_id == 3: active_users = list(u3.keys())
     for chat_id in active_users:
         try:
             if chat_id in STATUS_MSG_CACHE:
@@ -174,31 +168,23 @@ def format_total(bytes_num):
     return f"{bytes_num/1024**3:.2f} GB"
 
 def get_status_text():
-    cpu = psutil.cpu_percent()
-    ram = psutil.virtual_memory()
-    disco = shutil.disk_usage("/")
-    def mini_bar(pct, total=5):
-        filled = int(pct / 100 * total)
-        return "▰" * filled + "▱" * (total - filled)
+    cpu = psutil.cpu_percent(); ram = psutil.virtual_memory(); disco = shutil.disk_usage("/")
+    mini_bar = lambda pct: ("▰" * int(pct/20)) + ("▱" * (5 - int(pct/20)))
     status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
     adm_tag = "⚠️ <b>MODO PRIVADO ACTIVO</b>\n" if ONLY_ADMIN_MODE else ""
-    net = psutil.net_io_counters()
-    now = time.time()
-    delta_time = now - NET_CACHE['last_time']
-    if delta_time > 0:
-        up_s = (net.bytes_sent - NET_CACHE['last_sent']) / delta_time
-        down_s = (net.bytes_recv - NET_CACHE['last_recv']) / delta_time
+    net = psutil.net_io_counters(); now = time.time()
+    dt = now - NET_CACHE['last_time']
+    if dt > 0:
+        up_s = (net.bytes_sent - NET_CACHE['last_sent']) / dt
+        down_s = (net.bytes_recv - NET_CACHE['last_recv']) / dt
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     u1 = globals().get("user_preference_c1", {}); u2 = globals().get("user_data_c2", {}); u3 = globals().get("chat_messages_c3", {})
     active_count = len(set(list(u1.keys()) + list(u2.keys()) + list(u3.keys())))
-    act_1 = "⚡" if len(u1) > 0 else "💤"
-    act_2 = "⚡" if len(u2) > 0 else "💤"
-    act_3 = "⚡" if len(u3) > 0 else "💤"
+    act_1, act_2, act_3 = ("⚡" if len(u1)>0 else "💤"), ("⚡" if len(u2)>0 else "💤"), ("⚡" if len(u3)>0 else "💤")
     
     return (
-        f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
-        f"{adm_tag}"
+        f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n{adm_tag}"
         f"<code>──────────────────────</code>\n"
         f"<b>MODULOS DE SERVICIO:</b>\n"
         f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS.get(1, False) else '<code>OFF</code>'}\n"
@@ -224,13 +210,13 @@ async def live_status_loop(client, chat_id, message_id):
     while True:
         try:
             await asyncio.sleep(3)
+            if WAITING_FOR_ID: continue # Pausar actualización si estamos agregando ID
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
-        except MessageNotModified: continue
-        except Exception: break
+        except: continue
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
-    global ONLY_ADMIN_MODE, WAITING_FOR_ID
+    global ONLY_ADMIN_MODE, WAITING_FOR_ID, AUTHORIZED_USERS
     data = q.data
     if data.startswith("t_"):
         bid = int(data.split("_")[1])
@@ -241,20 +227,61 @@ async def manager_callbacks(c, q):
         event = "private" if ONLY_ADMIN_MODE else "public"
         for i in [1, 2, 3]:
             if BOT_STATUS[i]: asyncio.create_task(notify_users(i, event))
+    elif data == "add_user":
+        WAITING_FOR_ID = True
+        await q.answer("Envíame el ID del usuario...", show_alert=True)
+        await c.send_message(q.message.chat.id, "✍️ <b>MODO EDICIÓN:</b>\nPor favor envíame el <b>ID numérico</b> del usuario.")
+        return
+    elif data == "view_users":
+        if not AUTHORIZED_USERS: await q.answer("Lista vacía.", show_alert=True); return
+        btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), 
+                 InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
+        btns.append([InlineKeyboardButton("🔙 Volver", callback_data="refresh")])
+        await q.message.edit_text("📋 **LISTA DE ACCESO:**", reply_markup=InlineKeyboardMarkup(btns)); return
+    elif data.startswith("del_"):
+        uid = data.split("_")[1]
+        if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
+        return await manager_callbacks(c, q._replace(data="view_users"))
+    elif data == "clean_all":
+        target_dirs = ["downloads", "/kaggle/working/downloads"]
+        for d in target_dirs:
+            if os.path.exists(d): shutil.rmtree(d); os.makedirs(d)
+        await q.answer("🧹 Purga Completa", show_alert=True)
     elif data == "all_on":
         for k in BOT_STATUS:
-            if not BOT_STATUS[k]: BOT_STATUS[k] = True; asyncio.create_task(notify_users(k, "online"))
+            if not BOT_STATUS[k]: BOT_STATUS[k]=True; asyncio.create_task(notify_users(k, "online"))
     elif data == "all_off":
         for k in BOT_STATUS:
-            if BOT_STATUS[k]: BOT_STATUS[k] = False; asyncio.create_task(notify_users(k, "maintenance"))
+            if BOT_STATUS[k]: BOT_STATUS[k]=False; asyncio.create_task(notify_users(k, "maintenance"))
     elif data == "refresh": WAITING_FOR_ID = False
     try: await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
     except: pass
 
+@app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
+async def admin_input_handler(client, m):
+    global WAITING_FOR_ID, AUTHORIZED_USERS
+    if WAITING_FOR_ID and m.text:
+        ids = re.findall(r'\d+', m.text)
+        if ids:
+            target_id = ids[-1]
+            try:
+                user = await client.get_users(int(target_id))
+                name = user.first_name or "Desconocido"
+            except: name = "Desconocido"
+            AUTHORIZED_USERS[target_id] = name
+            save_authorized(AUTHORIZED_USERS)
+            await m.reply_text(f"✅ **{name}** (`{target_id}`) autorizado.")
+            WAITING_FOR_ID = False
+            sent = await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+            asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
+        else: await m.reply_text("❌ ID no válido.")
+
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(client, m):
-    sent_msg = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu(), quote=True)
-    asyncio.create_task(live_status_loop(client, m.chat.id, sent_msg.id))
+    global WAITING_FOR_ID
+    WAITING_FOR_ID = False
+    sent = await m.reply_text(get_status_text(), reply_markup=get_main_menu(), quote=True)
+    asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
