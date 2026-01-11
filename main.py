@@ -1,5 +1,5 @@
 # ==========================================
-#ACTUAL CODIGO FINAL IMPORTACIONES GLOBALES
+# CODIGO FINAL IMPORTACIONES GLOBALES
 # ==========================================
 import os
 import asyncio
@@ -55,7 +55,7 @@ BOT4_TOKEN = os.getenv("BOT4_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
 ADMIN_USERNAME = "AnzZGTv1"
 
-# --- ESTADOS ---
+# --- ESTADOS Y VARIABLES GLOBALES ---
 BOT_STATUS = {1: False, 2: False, 3: False}
 ONLY_ADMIN_MODE = False
 AUTHORIZED_USERS = load_authorized() 
@@ -63,6 +63,11 @@ WAITING_FOR_ID = False
 VIEWING_LIST = False
 CURRENT_LOOP_TASK = None 
 PANEL_MSG_ID = None 
+
+# Variables de Actividad Real (Para Dashboard Exacto)
+status_c1_active = {} # Se llena solo cuando Bot 1 está subiendo
+status_c3_active = {} # Se llena solo cuando Bot 3 está descargando
+# Nota: Bot 2 ya usa user_data_c2 que se limpia sola, así que no requiere variable extra.
 
 NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
 
@@ -100,6 +105,7 @@ def create_power_guard(bot_id):
                             "Este bot está operando en **Modo Privado** (Prioridad Premium). "
                             "Actualmente solo usuarios autorizados tienen acceso.\n\n"
                             "Solicita acceso al administrador.")
+                # Botón con mensaje personalizado incluyendo el ID del usuario
                 request_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📩 SOLICITAR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
@@ -153,21 +159,17 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    # --- LOGICA DE ACTIVIDAD PRECISA ---
-    u1 = globals().get("user_preference_c1", {})
-    u2 = globals().get("user_data_c2", {})
-    u3 = globals().get("chat_messages_c3", {})
+    # --- LÓGICA DE DETECCIÓN DE ACTIVIDAD CORREGIDA ---
+    # Ahora usamos los diccionarios de estado "Active" en lugar de los de preferencia
+    u1_real = globals().get("status_c1_active", {})
+    u2_real = globals().get("user_data_c2", {})
+    u3_real = globals().get("status_c3_active", {})
     
-    # Identificar actividad real por tráfico o contenido activo
-    is_active_mod = lambda d: "⚡" if d and len(d) > 0 and (up_s > 500 or down_s > 500) else "💤"
+    active_count = len(set(list(u1_real.keys()) + list(u2_real.keys()) + list(u3_real.keys())))
     
-    act_1 = is_active_mod(u1)
-    act_2 = "⚡" if u2 and len(u2) > 0 else "💤"
-    act_3 = is_active_mod(u3)
-    
-    # Conteo de IDs únicos reales activos
-    unique_users = set(list(u1.keys()) + list(u2.keys()) + list(u3.keys()))
-    active_count = len(unique_users) if (act_1 == "⚡" or act_2 == "⚡" or act_3 == "⚡") else 0
+    act_1 = ("⚡" if u1_real else "💤")
+    act_2 = ("⚡" if u2_real else "💤")
+    act_3 = ("⚡" if u3_real else "💤")
 
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
@@ -222,15 +224,11 @@ async def manager_callbacks(c, q):
         if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
         return await manager_callbacks(c, q._replace(data="view_users"))
     elif data == "clean_all":
-        # MATAR ACTIVIDADES Y LIMPIAR CACHE
         for d in ["downloads", "/kaggle/working/downloads"]:
             if os.path.exists(d): 
                 try: shutil.rmtree(d); os.makedirs(d)
                 except: pass
-        # RESET DE DICCIONARIOS DE ACTIVIDAD
-        for var in ["user_preference_c1", "user_data_c2", "chat_messages_c3"]:
-            if var in globals(): globals()[var].clear()
-        await q.answer("🧹 PURGA TOTAL COMPLETADA", show_alert=True)
+        await q.answer("🧹 Purga Completa")
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
     elif data == "all_off":
