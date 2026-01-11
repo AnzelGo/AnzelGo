@@ -54,16 +54,17 @@ BOT2_TOKEN = os.getenv("BOT2_TOKEN")
 BOT3_TOKEN = os.getenv("BOT3_TOKEN")
 BOT4_TOKEN = os.getenv("BOT4_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
-ADMIN_USERNAME = "AnzZGTv1" # Tu usuario sin el @
+ADMIN_USERNAME = "AnzZGTv1"
 
 # --- ESTADOS ---
 BOT_STATUS = {1: False, 2: False, 3: False}
 ONLY_ADMIN_MODE = False
 AUTHORIZED_USERS = load_authorized() 
 WAITING_FOR_ID = False 
-VIEWING_LIST = False # Nuevo estado para evitar que el loop cierre la lista
+VIEWING_LIST = False
+CURRENT_LOOP_TASK = None # Control de tarea única
 
-# Variable para caché de red (Cálculo de velocidad)
+# Variable para caché de red
 NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
 
 # --- CLIENTES ---
@@ -81,6 +82,7 @@ logger = logging.getLogger(__name__)
 from pyrogram import StopPropagation
 from pyrogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.errors import MessageNotModified, FloodWait
 
 def create_power_guard(bot_id):
     async def power_guard(client, update):
@@ -193,13 +195,18 @@ async def live_status_loop(client, chat_id, message_id):
             if WAITING_FOR_ID or VIEWING_LIST: continue
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
         except MessageNotModified: continue
-        except Exception: break
+        except FloodWait as e: await asyncio.sleep(e.value)
+        except Exception: 
+            await asyncio.sleep(5) # Reintento suave
+            continue
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
     global ONLY_ADMIN_MODE, WAITING_FOR_ID, VIEWING_LIST
     data = q.data
-    if data.startswith("t_"): BOT_STATUS[int(data.split("_")[1])] = not BOT_STATUS[int(data.split("_")[1])]
+    if data.startswith("t_"):
+        bid = int(data.split("_")[1])
+        BOT_STATUS[bid] = not BOT_STATUS[bid]
     elif data == "toggle_admin":
         ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
         await q.answer(f"Privacidad: {'ACTIVADA' if ONLY_ADMIN_MODE else 'DESACTIVADA'}", show_alert=True)
@@ -220,7 +227,9 @@ async def manager_callbacks(c, q):
         return await manager_callbacks(c, q._replace(data="view_users"))
     elif data == "clean_all":
         for d in ["downloads", "/kaggle/working/downloads"]:
-            if os.path.exists(d): shutil.rmtree(d); os.makedirs(d)
+            if os.path.exists(d): 
+                try: shutil.rmtree(d); os.makedirs(d)
+                except: pass
         await q.answer("🧹 Purga Completa", show_alert=True)
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
@@ -232,7 +241,7 @@ async def manager_callbacks(c, q):
 
 @app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
 async def admin_input_handler(client, m):
-    global WAITING_FOR_ID, AUTHORIZED_USERS
+    global WAITING_FOR_ID, CURRENT_LOOP_TASK
     if WAITING_FOR_ID and m.text:
         ids = re.findall(r'\d+', m.text)
         if ids:
@@ -243,16 +252,19 @@ async def admin_input_handler(client, m):
             except: name = "Desconocido"
             AUTHORIZED_USERS[target_id] = name; save_authorized(AUTHORIZED_USERS)
             await m.reply_text(f"✅ **{name}** (`{target_id}`) autorizado.")
-            WAITING_FOR_ID = False; sent = await m.reply_text(get_status_text(), reply_markup=get_main_menu())
-            asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
+            WAITING_FOR_ID = False
+            sent = await m.reply_text(get_status_text(), reply_markup=get_main_menu())
+            if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel()
+            CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
         else: await m.reply_text("❌ ID no válido.")
 
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(client, m):
-    global WAITING_FOR_ID, VIEWING_LIST
+    global WAITING_FOR_ID, VIEWING_LIST, CURRENT_LOOP_TASK
     WAITING_FOR_ID = False; VIEWING_LIST = False
+    if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel() # Matar bucle anterior
     sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu(), quote=True)
-    asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
+    CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
