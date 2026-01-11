@@ -64,10 +64,12 @@ VIEWING_LIST = False
 CURRENT_LOOP_TASK = None 
 PANEL_MSG_ID = None 
 
-# Variables de Actividad Real (Para Dashboard Exacto)
-status_c1_active = {} # Se llena solo cuando Bot 1 está subiendo
-status_c3_active = {} # Se llena solo cuando Bot 3 está descargando
-# Nota: Bot 2 ya usa user_data_c2 que se limpia sola, así que no requiere variable extra.
+# --- VARIABLES DE ACTIVIDAD EN TIEMPO REAL (CORRECCIÓN) ---
+# Estas variables controlan el icono ⚡/💤.
+# STATUS_C1 y STATUS_C3 deben llenarse cuando los bots trabajan y vaciarse al terminar.
+STATUS_C1 = {} 
+STATUS_C3 = {}
+# Nota: Bot 2 usa user_data_c2 que ya se limpia automáticamente.
 
 NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
 
@@ -159,17 +161,16 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    # --- LÓGICA DE DETECCIÓN DE ACTIVIDAD CORREGIDA ---
-    # Ahora usamos los diccionarios de estado "Active" en lugar de los de preferencia
-    u1_real = globals().get("status_c1_active", {})
-    u2_real = globals().get("user_data_c2", {})
-    u3_real = globals().get("status_c3_active", {})
+    # --- CORRECCIÓN DE ESTADO DE ACTIVIDAD ---
+    # Ahora verificamos las variables de estado real (STATUS_C1/C3), no las preferencias
+    u1_active = globals().get("STATUS_C1", {})
+    u2_active = globals().get("user_data_c2", {}) # Bot 2 usa su data de usuario que se limpia sola
+    u3_active = globals().get("STATUS_C3", {})
     
-    active_count = len(set(list(u1_real.keys()) + list(u2_real.keys()) + list(u3_real.keys())))
-    
-    act_1 = ("⚡" if u1_real else "💤")
-    act_2 = ("⚡" if u2_real else "💤")
-    act_3 = ("⚡" if u3_real else "💤")
+    active_count = len(set(list(u1_active.keys()) + list(u2_active.keys()) + list(u3_active.keys())))
+    act_1 = ("⚡" if u1_active else "💤")
+    act_2 = ("⚡" if u2_active else "💤")
+    act_3 = ("⚡" if u3_active else "💤")
 
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
@@ -363,29 +364,57 @@ async def set_server_via_btn_c1(_, m):
 @app1.on_message(filters.media)
 async def handle_media_c1(c, m):
     user_id = m.from_user.id
+    
+    # ⚡ NOTIFICAR ACTIVIDAD AL PANEL MASTER
+    STATUS_C1[user_id] = True 
+    
     if user_id not in user_preference_c1:
-        await m.reply_text("⚠️ <b>Error:</b> Seleccione un servidor primero.", reply_markup=get_fixed_menu_c1(), quote=True); return
+        await m.reply_text("⚠️ <b>Error:</b> Seleccione un servidor primero.", reply_markup=get_fixed_menu_c1(), quote=True)
+        STATUS_C1.pop(user_id, None) # Quitar rayo si hay error de servidor
+        return
+        
     server = user_preference_c1[user_id]
     status = await m.reply_text(f"📤 Preparando archivo...", quote=True)
     path = None
+    
     try:
+        # Descarga con tu barra de progreso actual
         path = await c.download_media(m, file_name="./", progress=progress_bar_c1, progress_args=(status, time.time(), server))
-        if server != "Catbox": await status.edit_text(f"📤 Subiendo a {server.upper()}...")
+        
+        if server != "Catbox": 
+            await status.edit_text(f"📤 Subiendo a {server.upper()}...")
+            
         link = await upload_file_c1(path, server)
+        
         if link:
             size_mb = os.path.getsize(path) / (1024**2)
             bot_username = (await c.get_me()).username
             share_link = f"https://t.me/{bot_username}?start=file_{uuid.uuid4().hex[:10]}"
+            
             if server == "Litterbox": vence = "72 Horas"
             elif server == "Pixeldrain": vence = "60 Días (tras inactividad)"
             else: vence = "Permanente"
+            
             final_text = (f"𝗬𝗼𝘂𝗿 𝗟𝗶𝗻𝗸 𝗚𝗲𝗻𝗲𝗿𝗮𝘁𝗲𝗱 !\n\n📦 Fɪʟᴇ ꜱɪᴢᴇ : {size_mb:.2f} MiB\n\n📥 Dᴏᴡɴʟᴏᴀᴅ : <code>{link}</code>\n\n🔗 Sʜᴀʀᴇ : {share_link}\n\n⏳ Vencimiento: {vence}")
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("sᴛʀᴇᴀüm", url=link),InlineKeyboardButton("ᴅᴏᴡɴʟᴏᴀᴅ", url=link)],[InlineKeyboardButton("ᴄʟᴏꜱᴇ", callback_data="close_all")]])
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("sᴛʀᴇᴀüm", url=link), InlineKeyboardButton("ᴅᴏᴡɴʟᴏᴀᴅ", url=link)],
+                [InlineKeyboardButton("ᴄʟᴏꜱᴇ", callback_data="close_all")]
+            ])
+            
             await status.edit_text(final_text, reply_markup=keyboard, disable_web_page_preview=True)
-        else: await status.edit_text(f"❌ Error al subir a {server}.")
-    except Exception as e: await status.edit_text(f"⚠️ Fallo: {str(e)}")
+        else: 
+            await status.edit_text(f"❌ Error al subir a {server}.")
+            
+    except Exception as e: 
+        await status.edit_text(f"⚠️ Fallo: {str(e)}")
+        
     finally:
-        if path and os.path.exists(path): os.remove(path)
+        # 💤 NOTIFICAR AL PANEL QUE EL BOT VOLVIÓ A REPOSO
+        STATUS_C1.pop(user_id, None)
+        
+        if path and os.path.exists(path): 
+            os.remove(path)
 
 @app1.on_callback_query(filters.regex("close_all"))
 async def close_callback_c1(c, q):
@@ -861,13 +890,37 @@ async def progress_bar_c3(current, total, msg, start_time):
 @app3.on_message(filters.command("start"))
 async def start_and_clean_c3(c, m):
     chat_id = m.chat.id
-    if chat_id in chat_messages_c3:
-        try: await c.delete_messages(chat_id, chat_messages_c3[chat_id]); chat_messages_c3[chat_id] = []
-        except: pass
-    try: await m.delete()
-    except: pass
-    welcome = await m.reply_text("✨ **¡BOT DE DESCARGAS ACTIVO!** ✨\n--------------------------------------\nEnvía un **enlace** o escribe lo que quieras **buscar**.\n*(Todo se borrará cuando uses /start)*")
-    save_msg_c3(chat_id, welcome.id)
+    user_id = m.from_user.id
+
+    # ⚡ NOTIFICAR ACTIVIDAD AL PANEL MASTER
+    STATUS_C3[user_id] = True 
+
+    try:
+        # Lógica de limpieza
+        if chat_id in chat_messages_c3:
+            try: 
+                await c.delete_messages(chat_id, chat_messages_c3[chat_id])
+                chat_messages_c3[chat_id] = []
+            except: 
+                pass
+        
+        try: 
+            await m.delete()
+        except: 
+            pass
+
+        # Mensaje de bienvenida
+        welcome = await m.reply_text(
+            "✨ **¡BOT DE DESCARGAS ACTIVO!** ✨\n"
+            "--------------------------------------\n"
+            "Envía un **enlace** o escribe lo que quieras **buscar**.\n"
+            "*(Todo se borrará cuando uses /start)*"
+        )
+        save_msg_c3(chat_id, welcome.id)
+
+    finally:
+        # 💤 VOLVER A ESTADO DE REPOSO
+        STATUS_C3.pop(user_id, None)
 
 @app3.on_message(filters.text)
 async def handle_text_c3(c, m):
