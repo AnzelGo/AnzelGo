@@ -1,5 +1,5 @@
 # ==========================================
-# 1.XXX IMPORTACIONES GLOBALES
+# 1. IMPORTACIONES GLOBALES
 # ==========================================
 import os
 import asyncio
@@ -62,7 +62,7 @@ ONLY_ADMIN_MODE = False
 AUTHORIZED_USERS = load_authorized() 
 WAITING_FOR_ID = False 
 VIEWING_LIST = False
-CURRENT_LOOP_TASK = None # Control de tarea única
+CURRENT_LOOP_TASK = None 
 
 # Variable para caché de red
 NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
@@ -162,9 +162,17 @@ def get_status_text():
         down_s = (net.bytes_recv - NET_CACHE['last_recv']) / dt
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
-    u1 = globals().get("user_preference_c1", {}); u2 = globals().get("user_data_c2", {}); u3 = globals().get("chat_messages_c3", {})
+    
+    # Detección precisa de actividad
+    u1 = globals().get("user_preference_c1", {})
+    u2 = globals().get("user_data_c2", {})
+    u3 = globals().get("chat_messages_c3", {})
+    
     active_count = len(set(list(u1.keys()) + list(u2.keys()) + list(u3.keys())))
-    act_1, act_2, act_3 = ("⚡" if u1 else "💤"), ("⚡" if u2 else "💤"), ("⚡" if u3 else "💤")
+    act_1 = "⚡" if u1 and len(u1) > 0 else "💤"
+    act_2 = "⚡" if u2 and len(u2) > 0 else "💤"
+    act_3 = "⚡" if u3 and len(u3) > 0 else "💤"
+
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
         f"<code>──────────────────────</code>\n"
@@ -195,36 +203,41 @@ async def live_status_loop(client, chat_id, message_id):
             if WAITING_FOR_ID or VIEWING_LIST: continue
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
         except MessageNotModified: continue
-        except FloodWait as e: await asyncio.sleep(e.value)
         except Exception: 
-            await asyncio.sleep(5) # Reintento suave
+            await asyncio.sleep(2)
             continue
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
-    global ONLY_ADMIN_MODE, WAITING_FOR_ID, VIEWING_LIST
+    global ONLY_ADMIN_MODE, WAITING_FOR_ID, VIEWING_LIST, AUTHORIZED_USERS
     data = q.data
+    
     if data.startswith("t_"):
         bid = int(data.split("_")[1])
         BOT_STATUS[bid] = not BOT_STATUS[bid]
     elif data == "toggle_admin":
         ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
-        await q.answer(f"Privacidad: {'ACTIVADA' if ONLY_ADMIN_MODE else 'DESACTIVADA'}", show_alert=True)
     elif data == "add_user":
         WAITING_FOR_ID = True; VIEWING_LIST = False
-        await q.answer("Envíame el ID...", show_alert=True)
         await c.send_message(q.message.chat.id, "✍️ <b>MODO EDICIÓN:</b>\nPor favor envíame el <b>ID numérico</b> del usuario.")
         return
     elif data == "view_users":
-        if not AUTHORIZED_USERS: await q.answer("No hay usuarios.", show_alert=True); return
+        if not AUTHORIZED_USERS: 
+            await q.answer("No hay usuarios autorizados.", show_alert=True)
+            return
         VIEWING_LIST = True; WAITING_FOR_ID = False
-        btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), InlineKeyboardButton("❌ Borrar", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
+        btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), 
+                 InlineKeyboardButton("❌ Borrar", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
         btns.append([InlineKeyboardButton("🔙 Volver al Panel", callback_data="refresh")])
-        await q.message.edit_text("📋 **LISTA DE ACCESO PRIVADO:**", reply_markup=InlineKeyboardMarkup(btns)); return
+        await q.message.edit_text("📋 **LISTA DE ACCESO PRIVADO:**", reply_markup=InlineKeyboardMarkup(btns))
+        return
     elif data.startswith("del_"):
         uid = data.split("_")[1]
-        if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
-        return await manager_callbacks(c, q._replace(data="view_users"))
+        if uid in AUTHORIZED_USERS:
+            del AUTHORIZED_USERS[uid]
+            save_authorized(AUTHORIZED_USERS)
+            # Forzar refresco inmediato de la lista para mostrar el cambio
+            return await manager_callbacks(c, q._replace(data="view_users"))
     elif data == "clean_all":
         for d in ["downloads", "/kaggle/working/downloads"]:
             if os.path.exists(d): 
@@ -235,13 +248,15 @@ async def manager_callbacks(c, q):
         for k in BOT_STATUS: BOT_STATUS[k] = True
     elif data == "all_off":
         for k in BOT_STATUS: BOT_STATUS[k] = False
-    elif data == "refresh": WAITING_FOR_ID = False; VIEWING_LIST = False
+    elif data == "refresh": 
+        WAITING_FOR_ID = False; VIEWING_LIST = False
+
     try: await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
-    except: pass
+    except MessageNotModified: pass
 
 @app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
 async def admin_input_handler(client, m):
-    global WAITING_FOR_ID, CURRENT_LOOP_TASK
+    global WAITING_FOR_ID, CURRENT_LOOP_TASK, AUTHORIZED_USERS
     if WAITING_FOR_ID and m.text:
         ids = re.findall(r'\d+', m.text)
         if ids:
@@ -262,7 +277,7 @@ async def admin_input_handler(client, m):
 async def start_controller(client, m):
     global WAITING_FOR_ID, VIEWING_LIST, CURRENT_LOOP_TASK
     WAITING_FOR_ID = False; VIEWING_LIST = False
-    if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel() # Matar bucle anterior
+    if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel()
     sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu(), quote=True)
     CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
 
