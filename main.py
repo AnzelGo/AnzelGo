@@ -100,7 +100,6 @@ def create_power_guard(bot_id):
                             "Este bot está operando en **Modo Privado** (Prioridad Premium). "
                             "Actualmente solo usuarios autorizados tienen acceso.\n\n"
                             "Solicita acceso al administrador.")
-                # Botón con mensaje personalizado incluyendo el ID del usuario
                 request_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📩 SOLICITAR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
@@ -154,9 +153,17 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    u1 = globals().get("user_preference_c1", {}); u2 = globals().get("user_data_c2", {}); u3 = globals().get("chat_messages_c3", {})
+    # Lógica de detección de actividad con precisión quirúrgica
+    u1 = globals().get("user_preference_c1", {})
+    u2 = globals().get("user_data_c2", {})
+    u3 = globals().get("chat_messages_c3", {})
+    
+    # Solo marca ⚡ si el diccionario tiene procesos reales (claves con valores activos)
+    act_1 = "⚡" if any(v for v in u1.values() if v) else "💤"
+    act_2 = "⚡" if any(v for v in u2.values() if v) else "💤"
+    act_3 = "⚡" if any(v for v in u3.values() if v) else "💤"
+    
     active_count = len(set(list(u1.keys()) + list(u2.keys()) + list(u3.keys())))
-    act_1, act_2, act_3 = ("⚡" if u1 else "💤"), ("⚡" if u2 else "💤"), ("⚡" if u3 else "💤")
 
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
