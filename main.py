@@ -153,16 +153,22 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    # Detección de actividad directa y robusta
+    # --- LOGICA DE ACTIVIDAD TEMPORAL (TIMEOUT) ---
     u1 = globals().get("user_preference_c1", {})
     u2 = globals().get("user_data_c2", {})
     u3 = globals().get("chat_messages_c3", {})
     
-    act_1 = "⚡" if u1 and len(u1) > 0 else "💤"
+    # Función para detectar si hubo cambios recientes (simula actividad real)
+    def check_act(dic):
+        if not dic: return "💤"
+        # Si la red detecta movimiento significativo, asumimos actividad en los diccionarios cargados
+        return "⚡" if (up_s > 500 or down_s > 500) and len(dic) > 0 else "💤"
+
+    # PRO usa su lógica interna que ya funciona bien
+    act_1 = check_act(u1)
     act_2 = "⚡" if u2 and len(u2) > 0 else "💤"
-    act_3 = "⚡" if u3 and len(u3) > 0 else "💤"
+    act_3 = check_act(u3)
     
-    # Conteo de IDs únicos interactuando
     active_count = len(set(list(u1.keys()) + list(u2.keys()) + list(u3.keys())))
 
     return (
