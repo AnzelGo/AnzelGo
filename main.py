@@ -126,8 +126,7 @@ for bid, app in [(1, app1), (2, app2), (3, app3)]:
     app.add_handler(CallbackQueryHandler(guard), group=-1)
 
 # ==========================================
-# ==========================================
-# LÓGICA PANEL DE CONTROL (BOT 4) - DISEÑO ORIGINAL
+# LÓGICA PANEL DE CONTROL (BOT 4) - FIX ARRANQUE
 # ==========================================
 
 def get_main_menu():
@@ -142,113 +141,140 @@ def get_main_menu():
     ])
 
 def get_status_text():
-    """Genera el diseño visual exacto que solicitaste"""
-    cpu = psutil.cpu_percent()
-    ram = psutil.virtual_memory()
-    disco = shutil.disk_usage("/")
-    mini_bar = lambda pct: ("▰" * int(pct/20)) + ("▱" * (5 - int(pct/20)))
-    status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
-    
-    net = psutil.net_io_counters()
-    now = time.time()
-    dt = now - NET_CACHE['last_time']
-    if dt > 0:
-        up_s = (net.bytes_sent - NET_CACHE['last_sent']) / dt
-        down_s = (net.bytes_recv - NET_CACHE['last_recv']) / dt
-    else: up_s, down_s = 0, 0
-    
-    NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
-    
-    # Verificación de actividad real
-    u1_active = globals().get("STATUS_C1", {})
-    u2_active = globals().get("user_data_c2", {})
-    u3_active = globals().get("STATUS_C3", {})
-    
-    active_count = len(set(list(u1_active.keys()) + list(u2_active.keys()) + list(u3_active.keys())))
-    act_1 = ("⚡" if u1_active else "💤")
-    act_2 = ("⚡" if u2_active else "💤")
-    act_3 = ("⚡" if u3_active else "💤")
+    """Genera el diseño visual con protecciones contra fallos de datos"""
+    try:
+        cpu = psutil.cpu_percent()
+        ram = psutil.virtual_memory()
+        disco = shutil.disk_usage("/")
+        mini_bar = lambda pct: ("▰" * int(pct/20)) + ("▱" * (5 - int(pct/20)))
+        status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
+        
+        # Cálculo de Red Seguro
+        net = psutil.net_io_counters()
+        now = time.time()
+        last_time = NET_CACHE.get('last_time', 0)
+        dt = now - last_time
+        
+        if dt > 0 and last_time > 0:
+            up_s = (net.bytes_sent - NET_CACHE.get('last_sent', 0)) / dt
+            down_s = (net.bytes_recv - NET_CACHE.get('last_recv', 0)) / dt
+        else:
+            up_s, down_s = 0, 0
+            
+        NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
+        
+        # Estados de actividad
+        u1_active = globals().get("STATUS_C1", {})
+        u2_active = globals().get("user_data_c2", {})
+        u3_active = globals().get("STATUS_C3", {})
+        
+        active_count = len(set(list(u1_active.keys()) + list(u2_active.keys()) + list(u3_active.keys())))
+        act_1 = "⚡" if u1_active else "💤"
+        act_2 = "⚡" if u2_active else "💤"
+        act_3 = "⚡" if u3_active else "💤"
 
-    return (
-        f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
-        f"<code>──────────────────────</code>\n"
-        f"<b>MODULOS DE SERVICIO:</b>\n"
-        f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS.get(1, False) else '<code>OFF</code>'}\n"
-        f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS.get(2, False) else '<code>OFF</code>'}\n"
-        f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS.get(3, False) else '<code>OFF</code>'}\n"
-        f"<code>──────────────────────</code>\n"
-        f"<b>RECURSOS DEL NÚCLEO:</b>\n"
-        f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
-        f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
-        f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
-        f"<code>──────────────────────</code>\n"
-        f"<b>MONITOR DE RED (LIVE):</b>\n"
-        f"  ⬆️ <b>Subida:</b> <code>{format_speed(up_s)}</code>\n"
-        f"  ⬇️ <b>Bajada:</b> <code>{format_speed(down_s)}</code>\n"
-        f"  📦 <b>Total:</b> <code>{format_total(net.bytes_sent + net.bytes_recv)}</code>\n\n"
-        f"  👥 <b>Usuarios Activos:</b> <code>{active_count}</code>\n\n"
-        f"<b>🤖 ACTIVIDAD ACTUAL:</b>\n"
-        f"  [UP: {act_1}]  [PRO: {act_2}]  [DL: {act_3}]\n"
-        f"<code>──────────────────────</code>"
-    )
+        return (
+            f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
+            f"<code>──────────────────────</code>\n"
+            f"<b>MODULOS DE SERVICIO:</b>\n"
+            f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS.get(1, False) else '<code>OFF</code>'}\n"
+            f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS.get(2, False) else '<code>OFF</code>'}\n"
+            f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS.get(3, False) else '<code>OFF</code>'}\n"
+            f"<code>──────────────────────</code>\n"
+            f"<b>RECURSOS DEL NÚCLEO:</b>\n"
+            f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
+            f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
+            f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
+            f"<code>──────────────────────</code>\n"
+            f"<b>MONITOR DE RED (LIVE):</b>\n"
+            f"  ⬆️ <b>Subida:</b> <code>{format_speed(up_s)}</code>\n"
+            f"  ⬇️ <b>Bajada:</b> <code>{format_speed(down_s)}</code>\n"
+            f"  📦 <b>Total:</b> <code>{format_total(net.bytes_sent + net.bytes_recv)}</code>\n\n"
+            f"  👥 <b>Usuarios Activos:</b> <code>{active_count}</code>\n\n"
+            f"<b>🤖 ACTIVIDAD ACTUAL:</b>\n"
+            f"  [UP: {act_1}]  [PRO: {act_2}]  [DL: {act_3}]\n"
+            f"<code>──────────────────────</code>"
+        )
+    except Exception as e:
+        return f"⚠️ **Error cargando Dashboard:**\n<code>{str(e)}</code>"
 
 async def live_status_loop(client, chat_id, message_id):
     while True:
         try:
-            await asyncio.sleep(10) # Intervalo seguro para evitar que se traben los botones
+            await asyncio.sleep(10) 
             if WAITING_FOR_ID or VIEWING_LIST: continue
             
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
         except MessageNotModified: continue
-        except FloodWait as e: await asyncio.sleep(e.value + 2)
+        except FloodWait as e: await asyncio.sleep(e.value + 5)
         except asyncio.CancelledError: break
-        except Exception: continue
+        except Exception as e: 
+            logging.error(f"Error Loop Bot 4: {e}")
+            continue
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
     global ONLY_ADMIN_MODE, WAITING_FOR_ID, VIEWING_LIST
     data = q.data
-    
     try:
         if data.startswith("t_"): 
-            BOT_STATUS[int(data.split("_")[1])] = not BOT_STATUS[int(data.split("_")[1])]
+            num = int(data.split("_")[1])
+            BOT_STATUS[num] = not BOT_STATUS.get(num, False)
         elif data == "toggle_admin": 
             ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
         elif data == "add_user": 
             WAITING_FOR_ID = True; VIEWING_LIST = False
-            await q.answer("Envíame el ID del usuario")
-            await q.message.edit_text("📝 **MODO REGISTRO**\nEnvíame el ID del usuario a autorizar.")
+            await q.answer("Envíame el ID")
+            await q.message.edit_text("📝 **MODO REGISTRO**\nEnvíame el ID del usuario.")
             return
         elif data == "view_users":
             if not AUTHORIZED_USERS: 
-                await q.answer("Lista vacía.", show_alert=True)
-                return
+                await q.answer("Lista vacía.", show_alert=True); return
             VIEWING_LIST = True; WAITING_FOR_ID = False
-            btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
+            btns = [[InlineKeyboardButton(f"👤 {n}", callback_data="none"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
             btns.append([InlineKeyboardButton("🔙 Volver", callback_data="refresh")])
-            await q.message.edit_text("📋 **LISTA DE ACCESO PRIVADO:**", reply_markup=InlineKeyboardMarkup(btns))
-            return
+            await q.message.edit_text("📋 **LISTA DE ACCESO:**", reply_markup=InlineKeyboardMarkup(btns)); return
         elif data.startswith("del_"):
             uid = data.split("_")[1]
             if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
             return await manager_callbacks(c, q._replace(data="view_users"))
         elif data == "clean_all":
+            await q.answer("🧹 Limpiando...")
             for d in ["downloads", "/kaggle/working/downloads"]:
-                if os.path.exists(d): 
-                    try: shutil.rmtree(d); os.makedirs(d)
-                    except: pass
-            await q.answer("🧹 Purga Completa")
+                if os.path.exists(d): shutil.rmtree(d, ignore_errors=True); os.makedirs(d, exist_errors=True)
+            await q.answer("🧹 Purga Completa", show_alert=True)
         elif data == "all_on":
-            for k in BOT_STATUS: BOT_STATUS[k] = True
+            for k in [1, 2, 3]: BOT_STATUS[k] = True
         elif data == "all_off":
-            for k in BOT_STATUS: BOT_STATUS[k] = False
+            for k in [1, 2, 3]: BOT_STATUS[k] = False
         elif data == "refresh": 
             WAITING_FOR_ID = False; VIEWING_LIST = False
 
-        # Actualización inmediata al presionar botón
         await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
-    except MessageNotModified: pass
-    except Exception as e: logging.error(f"Error en botones: {e}")
+    except Exception as e: print(f"Error Callback: {e}")
+
+@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
+async def start_controller(client, m):
+    global WAITING_FOR_ID, VIEWING_LIST, CURRENT_LOOP_TASK, PANEL_MSG_ID
+    try:
+        WAITING_FOR_ID = False; VIEWING_LIST = False
+        
+        # Matar bucle anterior de forma segura
+        if CURRENT_LOOP_TASK: 
+            CURRENT_LOOP_TASK.cancel()
+            try: await CURRENT_LOOP_TASK
+            except: pass
+            
+        # Forzar envío del mensaje
+        text = get_status_text()
+        markup = get_main_menu()
+        sent = await m.reply_text(text=text, reply_markup=markup)
+        PANEL_MSG_ID = sent.id
+        
+        # Iniciar nuevo bucle
+        CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
+    except Exception as e:
+        await m.reply_text(f"❌ **Error Fatal al iniciar Panel:**\n`{str(e)}`")
 
 @app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
 async def admin_input_handler(client, m):
@@ -263,26 +289,11 @@ async def admin_input_handler(client, m):
             except: name = "Desconocido"
             AUTHORIZED_USERS[target_id] = name
             save_authorized(AUTHORIZED_USERS)
-            
-            await m.reply_text(f"✅ `{target_id}` Agregado")
+            await m.reply_text(f"✅ `{name}` ({target_id}) Autorizado")
             WAITING_FOR_ID = False
             if PANEL_MSG_ID:
                 try: await client.edit_message_text(m.chat.id, PANEL_MSG_ID, get_status_text(), reply_markup=get_main_menu())
                 except: pass
-
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_controller(client, m):
-    global WAITING_FOR_ID, VIEWING_LIST, CURRENT_LOOP_TASK, PANEL_MSG_ID
-    WAITING_FOR_ID = False; VIEWING_LIST = False
-    
-    if CURRENT_LOOP_TASK: 
-        CURRENT_LOOP_TASK.cancel()
-        try: await CURRENT_LOOP_TASK
-        except: pass
-        
-    sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu())
-    PANEL_MSG_ID = sent.id
-    CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
