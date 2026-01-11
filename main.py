@@ -153,19 +153,17 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    # --- DETECCIÓN DE ACTIVIDAD MEJORADA ---
+    # Detección de actividad directa y robusta
     u1 = globals().get("user_preference_c1", {})
     u2 = globals().get("user_data_c2", {})
     u3 = globals().get("chat_messages_c3", {})
     
-    # Verificamos si hay ALGUNA tarea activa (no solo si el usuario existe)
-    is_active = lambda d: "⚡" if any(x for x in d.values() if isinstance(x, dict) and x.get('active') or x == True) else "💤"
+    act_1 = "⚡" if u1 and len(u1) > 0 else "💤"
+    act_2 = "⚡" if u2 and len(u2) > 0 else "💤"
+    act_3 = "⚡" if u3 and len(u3) > 0 else "💤"
     
-    act_1 = is_active(u1)
-    act_2 = is_active(u2)
-    act_3 = is_active(u3)
-    
-    active_count = len([k for k, v in u2.items() if v]) # Conteo basado en PRO para estabilidad
+    # Conteo de IDs únicos interactuando
+    active_count = len(set(list(u1.keys()) + list(u2.keys()) + list(u3.keys())))
 
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
