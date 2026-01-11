@@ -93,13 +93,16 @@ def create_power_guard(bot_id):
                 try: await update.reply_text(msg_off)
                 except: pass
             raise StopPropagation
+
         if ONLY_ADMIN_MODE:
             if user_id != ADMIN_ID and str(user_id) not in AUTHORIZED_USERS:
                 msg_priv = ("🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                            "Este bot está operando en **Modo Privado** (Prioridad Premium). Actualmente solo usuarios autorizados tienen acceso.\n\n"
+                            "Este bot está operando en **Modo Privado** (Prioridad Premium). "
+                            "Actualmente solo usuarios autorizados tienen acceso.\n\n"
                             "Solicita acceso al administrador.")
+                # Botón con mensaje personalizado incluyendo el ID del usuario
                 request_kb = InlineKeyboardMarkup([[
-                    InlineKeyboardButton("📩 SOLICITAR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}")
+                    InlineKeyboardButton("📩 SOLICITAR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
                 if isinstance(update, CallbackQuery):
                     try: await update.answer("🔒 Acceso Denegado.", show_alert=True)
@@ -182,7 +185,6 @@ async def live_status_loop(client, chat_id, message_id):
     while True:
         try:
             await asyncio.sleep(3)
-            # Bloqueo total si se está administrando
             if WAITING_FOR_ID or VIEWING_LIST: continue
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
         except MessageNotModified: continue
@@ -234,16 +236,12 @@ async def admin_input_handler(client, m):
                 name = user.first_name or "Desconocido"
             except: name = "Desconocido"
             AUTHORIZED_USERS[target_id] = name; save_authorized(AUTHORIZED_USERS)
-            
-            # Limpieza segura
             try: await m.delete()
             except: pass
-            
             temp = await m.reply_text(f"✅ `{target_id}` Agregado")
             await asyncio.sleep(2)
             try: await temp.delete()
             except: pass
-            
             WAITING_FOR_ID = False
             if PANEL_MSG_ID:
                 try: await client.edit_message_text(m.chat.id, PANEL_MSG_ID, get_status_text(), reply_markup=get_main_menu())
@@ -253,16 +251,12 @@ async def admin_input_handler(client, m):
 async def start_controller(client, m):
     global WAITING_FOR_ID, VIEWING_LIST, CURRENT_LOOP_TASK, PANEL_MSG_ID
     WAITING_FOR_ID = False; VIEWING_LIST = False
-    # Reiniciamos la tarea si existe
     if CURRENT_LOOP_TASK: 
         try: CURRENT_LOOP_TASK.cancel()
         except: pass
-    
-    # Enviar panel limpio
     sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu())
     PANEL_MSG_ID = sent.id
     CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
-
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
