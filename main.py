@@ -130,6 +130,15 @@ def get_main_menu():
         [InlineKeyboardButton("⚡ POWER ON", callback_data="all_on"), InlineKeyboardButton("❄️ STANDBY", callback_data="all_off")]
     ])
 
+def format_speed(bytes_sec):
+    if bytes_sec < 1024: return f"{bytes_sec:.2f} B/s"
+    elif bytes_sec < 1024**2: return f"{bytes_sec/1024:.2f} KB/s"
+    else: return f"{bytes_sec/1024**2:.2f} MB/s"
+
+def format_total(bytes_num):
+    if bytes_num < 1024**3: return f"{bytes_num/1024**2:.1f} MB"
+    return f"{bytes_num/1024**3:.2f} GB"
+
 def get_status_text():
     cpu = psutil.cpu_percent(); ram = psutil.virtual_memory(); disco = shutil.disk_usage("/")
     mini_bar = lambda pct: ("▰" * int(pct/20)) + ("▱" * (5 - int(pct/20)))
@@ -173,6 +182,7 @@ async def live_status_loop(client, chat_id, message_id):
     while True:
         try:
             await asyncio.sleep(3)
+            # Bloqueo total si se está administrando
             if WAITING_FOR_ID or VIEWING_LIST: continue
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
         except MessageNotModified: continue
@@ -186,7 +196,7 @@ async def manager_callbacks(c, q):
     elif data == "toggle_admin": ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
     elif data == "add_user": 
         WAITING_FOR_ID = True; VIEWING_LIST = False
-        await q.answer("Escribe el ID en el chat")
+        await q.answer("Envíame el ID")
         return
     elif data == "view_users":
         if not AUTHORIZED_USERS: await q.answer("Lista vacía.", show_alert=True); return
@@ -224,8 +234,16 @@ async def admin_input_handler(client, m):
                 name = user.first_name or "Desconocido"
             except: name = "Desconocido"
             AUTHORIZED_USERS[target_id] = name; save_authorized(AUTHORIZED_USERS)
-            await m.delete() # Borra el ID que enviaste
-            temp = await m.reply_text(f"✅ `{target_id}` Agregado"); await asyncio.sleep(2); await temp.delete()
+            
+            # Limpieza segura
+            try: await m.delete()
+            except: pass
+            
+            temp = await m.reply_text(f"✅ `{target_id}` Agregado")
+            await asyncio.sleep(2)
+            try: await temp.delete()
+            except: pass
+            
             WAITING_FOR_ID = False
             if PANEL_MSG_ID:
                 try: await client.edit_message_text(m.chat.id, PANEL_MSG_ID, get_status_text(), reply_markup=get_main_menu())
@@ -235,10 +253,12 @@ async def admin_input_handler(client, m):
 async def start_controller(client, m):
     global WAITING_FOR_ID, VIEWING_LIST, CURRENT_LOOP_TASK, PANEL_MSG_ID
     WAITING_FOR_ID = False; VIEWING_LIST = False
-    try: await m.delete() # Borra el comando /start del chat
-    except: pass
-    if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel()
-    # Enviar panel y guardar ID
+    # Reiniciamos la tarea si existe
+    if CURRENT_LOOP_TASK: 
+        try: CURRENT_LOOP_TASK.cancel()
+        except: pass
+    
+    # Enviar panel limpio
     sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu())
     PANEL_MSG_ID = sent.id
     CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
