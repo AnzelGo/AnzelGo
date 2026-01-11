@@ -124,7 +124,7 @@ for bid, app in [(1, app1), (2, app2), (3, app3)]:
     app.add_handler(CallbackQueryHandler(guard), group=-1)
 
 # ==========================================
-# LÓGICA PANEL DE CONTROL (BOT 4) - PRO MAX
+# LÓGICA PANEL DE CONTROL (BOT 4) - SLIM VERSION
 # ==========================================
 
 def get_main_menu():
@@ -140,47 +140,24 @@ def get_main_menu():
     ])
 
 def get_status_text():
-    # Obtener recursos del sistema
-    cpu = psutil.cpu_percent()
-    ram = psutil.virtual_memory()
-    disco = shutil.disk_usage("/")
-    
-    # Barra visual pequeña
-    mini_bar = lambda pct: ("▰" * int(pct/20)) + ("▱" * (5 - int(pct/20)))
-    
-    # Icono de estado general
-    status_icon = "📡" if any(BOT_STATUS.values()) else "💤"
-
     return (
-        f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
+        f"📡 <b>SYSTEM CORE DASHBOARD</b>\n"
         f"<code>──────────────────────</code>\n"
         f"<b>MODULOS DE SERVICIO:</b>\n"
         f"  ├ <b>Uploader</b>   ▸ {'<code>ON</code>' if BOT_STATUS.get(1, False) else '<code>OFF</code>'}\n"
         f"  ├ <b>Anzel Pro</b>  ▸ {'<code>ON</code>' if BOT_STATUS.get(2, False) else '<code>OFF</code>'}\n"
         f"  └ <b>Downloader</b> ▸ {'<code>ON</code>' if BOT_STATUS.get(3, False) else '<code>OFF</code>'}\n"
-        f"<code>──────────────────────</code>\n"
-        f"<b>RECURSOS DEL NÚCLEO:</b>\n"
-        f"  <b>📟 CPU:</b> <code>{cpu}%</code> {mini_bar(cpu)}\n"
-        f"  <b>🧠 RAM:</b> <code>{ram.percent}%</code> {mini_bar(ram.percent)}\n"
-        f"  <b>💽 DSK:</b> <code>{disco.used // (2**30)}G / {disco.total // (2**30)}G</code>\n"
         f"<code>──────────────────────</code>"
     )
 
 async def live_status_loop(client, chat_id, message_id):
     while True:
         try:
-            # Intervalo aumentado para evitar FloodWait dado que la info es estática
-            await asyncio.sleep(10) 
+            await asyncio.sleep(15) 
             if WAITING_FOR_ID or VIEWING_LIST: continue
-            
-            # Solo edita si el contenido ha cambiado (aunque CPU/RAM cambian siempre)
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
-        except FloodWait as e:
-            await asyncio.sleep(e.value + 5)
-        except MessageNotModified:
-            continue
-        except Exception:
-            break
+        except (MessageNotModified, FloodWait): continue
+        except Exception: break
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
@@ -189,34 +166,25 @@ async def manager_callbacks(c, q):
     
     try:
         if data == "stop_panel":
-            if CURRENT_LOOP_TASK:
-                CURRENT_LOOP_TASK.cancel()
-                CURRENT_LOOP_TASK = None
-            await q.message.delete()
-            await q.answer("Panel cerrado y monitoreo detenido.", show_alert=True)
-            return
+            if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel()
+            await q.message.delete(); await q.answer("Panel detenido", show_alert=True); return
 
         if data.startswith("t_"): BOT_STATUS[int(data.split("_")[1])] = not BOT_STATUS[int(data.split("_")[1])]
         elif data == "toggle_admin": ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
         elif data == "add_user": 
-            WAITING_FOR_ID = True; VIEWING_LIST = False
-            await q.answer("Envíame el ID")
-            return
+            WAITING_FOR_ID = True; await q.answer("Envíame el ID a autorizar", show_alert=True); return
         elif data == "view_users":
-            if not AUTHORIZED_USERS: await q.answer("Lista vacía.", show_alert=True); return
-            VIEWING_LIST = True; WAITING_FOR_ID = False
-            btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
+            if not AUTHORIZED_USERS: await q.answer("No hay usuarios.", show_alert=True); return
+            VIEWING_LIST = True; btns = [[InlineKeyboardButton(f"👤 {n}", callback_data="n"), InlineKeyboardButton("❌", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
             btns.append([InlineKeyboardButton("🔙 Volver", callback_data="refresh")])
-            await q.message.edit_text("📋 **LISTA DE ACCESO PRIVADO:**", reply_markup=InlineKeyboardMarkup(btns)); return
+            await q.message.edit_text("👥 **USUARIOS AUTORIZADOS:**", reply_markup=InlineKeyboardMarkup(btns)); return
         elif data.startswith("del_"):
             uid = data.split("_")[1]
             if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
             return await manager_callbacks(c, q._replace(data="view_users"))
         elif data == "clean_all":
             for d in ["downloads", "/kaggle/working/downloads"]:
-                if os.path.exists(d): 
-                    try: shutil.rmtree(d); os.makedirs(d)
-                    except: pass
+                if os.path.exists(d): shutil.rmtree(d); os.makedirs(d)
             await q.answer("🧹 Purga Completa")
         elif data == "all_on":
             for k in BOT_STATUS: BOT_STATUS[k] = True
@@ -225,41 +193,40 @@ async def manager_callbacks(c, q):
         elif data == "refresh": WAITING_FOR_ID = False; VIEWING_LIST = False
         
         await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
-    except MessageNotModified: pass
-    except FloodWait as e: await asyncio.sleep(e.value)
-    except Exception: pass
+    except: pass
 
 @app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
 async def admin_input_handler(client, m):
     global WAITING_FOR_ID, PANEL_MSG_ID
     if WAITING_FOR_ID and m.text:
-        ids = re.findall(r'\d+', m.text)
-        if ids:
-            target_id = ids[-1]
+        target_id = "".join(filter(str.isdigit, m.text))
+        if target_id:
             try:
-                user = await client.get_users(int(target_id))
-                name = user.first_name or "Desconocido"
-            except: name = "Desconocido"
+                u = await client.get_users(int(target_id))
+                name = u.first_name
+            except: name = "User"
             AUTHORIZED_USERS[target_id] = name; save_authorized(AUTHORIZED_USERS)
-            try: await m.delete()
-            except: pass
-            temp = await m.reply_text(f"✅ `{target_id}` Agregado")
-            await asyncio.sleep(2); await temp.delete()
-            WAITING_FOR_ID = False
-            if PANEL_MSG_ID:
-                try: await client.edit_message_text(m.chat.id, PANEL_MSG_ID, get_status_text(), reply_markup=get_main_menu())
-                except: pass
+            await m.reply_text(f"✅ `{target_id}` autorizado."); WAITING_FOR_ID = False
+            if PANEL_MSG_ID: 
+                await client.send_message(m.chat.id, "Panel actualizado. Use /start si se perdió.")
 
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
+@app4.on_message(filters.command("start"))
 async def start_controller(client, m):
     global WAITING_FOR_ID, VIEWING_LIST, CURRENT_LOOP_TASK, PANEL_MSG_ID
+    
+    # Verificación de seguridad
+    if m.from_user.id != ADMIN_ID:
+        return await m.reply_text(f"❌ Acceso denegado.\nTu ID: `{m.from_user.id}`")
+
     WAITING_FOR_ID = False; VIEWING_LIST = False
-    if CURRENT_LOOP_TASK: 
+    if CURRENT_LOOP_TASK:
         try: CURRENT_LOOP_TASK.cancel()
         except: pass
+        
     sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu())
     PANEL_MSG_ID = sent.id
     CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
+
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
