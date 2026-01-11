@@ -33,7 +33,6 @@ nest_asyncio.apply()
 # CONFIGURACIÓN GLOBAL Y CONTROLADOR (BOT 4)
 # ==========================================
 
-# Archivo persistente para usuarios autorizados
 DB_PATH = "authorized_users.json"
 
 def load_authorized():
@@ -64,10 +63,8 @@ WAITING_FOR_ID = False
 VIEWING_LIST = False
 CURRENT_LOOP_TASK = None 
 
-# Variable para caché de red
 NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
 
-# --- CLIENTES ---
 app1 = Client("bot_uploader", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN)
 app2 = Client("bot_video_pro", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_TOKEN)
 app3 = Client("bot_limpieza", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN)
@@ -163,7 +160,6 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    # Detección precisa de actividad
     u1 = globals().get("user_preference_c1", {})
     u2 = globals().get("user_data_c2", {})
     u3 = globals().get("chat_messages_c3", {})
@@ -199,8 +195,10 @@ def get_status_text():
 async def live_status_loop(client, chat_id, message_id):
     while True:
         try:
+            if WAITING_FOR_ID or VIEWING_LIST:
+                await asyncio.sleep(1) # Pausa total para dar velocidad a la administración
+                continue
             await asyncio.sleep(3)
-            if WAITING_FOR_ID or VIEWING_LIST: continue
             await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
         except MessageNotModified: continue
         except Exception: 
@@ -219,13 +217,16 @@ async def manager_callbacks(c, q):
         ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
     elif data == "add_user":
         WAITING_FOR_ID = True; VIEWING_LIST = False
+        await q.answer("Acceso rápido activado", show_alert=False)
         await c.send_message(q.message.chat.id, "✍️ <b>MODO EDICIÓN:</b>\nPor favor envíame el <b>ID numérico</b> del usuario.")
         return
     elif data == "view_users":
+        # Bloqueo inmediato del loop para evitar lag
+        VIEWING_LIST = True; WAITING_FOR_ID = False
         if not AUTHORIZED_USERS: 
             await q.answer("No hay usuarios autorizados.", show_alert=True)
+            VIEWING_LIST = False
             return
-        VIEWING_LIST = True; WAITING_FOR_ID = False
         btns = [[InlineKeyboardButton(f"👤 {n} ({u})", callback_data="none"), 
                  InlineKeyboardButton("❌ Borrar", callback_data=f"del_{u}")] for u, n in AUTHORIZED_USERS.items()]
         btns.append([InlineKeyboardButton("🔙 Volver al Panel", callback_data="refresh")])
@@ -236,7 +237,7 @@ async def manager_callbacks(c, q):
         if uid in AUTHORIZED_USERS:
             del AUTHORIZED_USERS[uid]
             save_authorized(AUTHORIZED_USERS)
-            # Forzar refresco inmediato de la lista para mostrar el cambio
+            # Re-renderizado instantáneo
             return await manager_callbacks(c, q._replace(data="view_users"))
     elif data == "clean_all":
         for d in ["downloads", "/kaggle/working/downloads"]:
@@ -265,9 +266,11 @@ async def admin_input_handler(client, m):
                 user = await client.get_users(int(target_id))
                 name = user.first_name or "Desconocido"
             except: name = "Desconocido"
-            AUTHORIZED_USERS[target_id] = name; save_authorized(AUTHORIZED_USERS)
+            AUTHORIZED_USERS[target_id] = name
+            save_authorized(AUTHORIZED_USERS)
             await m.reply_text(f"✅ **{name}** (`{target_id}`) autorizado.")
             WAITING_FOR_ID = False
+            # Reiniciar panel
             sent = await m.reply_text(get_status_text(), reply_markup=get_main_menu())
             if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel()
             CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
