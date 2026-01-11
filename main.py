@@ -1,5 +1,5 @@
 # ==========================================
-# CODIGO FINAL IMPORTACIONES GLOBALES
+#ACTUAL CODIGO FINAL IMPORTACIONES GLOBALES
 # ==========================================
 import os
 import asyncio
@@ -100,7 +100,6 @@ def create_power_guard(bot_id):
                             "Este bot está operando en **Modo Privado** (Prioridad Premium). "
                             "Actualmente solo usuarios autorizados tienen acceso.\n\n"
                             "Solicita acceso al administrador.")
-                # Botón con mensaje personalizado incluyendo el ID del usuario
                 request_kb = InlineKeyboardMarkup([[
                     InlineKeyboardButton("📩 SOLICITAR ACCESO", url=f"https://t.me/{ADMIN_USERNAME}?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")
                 ]])
@@ -154,9 +153,21 @@ def get_status_text():
     else: up_s, down_s = 0, 0
     NET_CACHE.update({"last_sent": net.bytes_sent, "last_recv": net.bytes_recv, "last_time": now})
     
-    u1 = globals().get("user_preference_c1", {}); u2 = globals().get("user_data_c2", {}); u3 = globals().get("chat_messages_c3", {})
-    active_count = len(set(list(u1.keys()) + list(u2.keys()) + list(u3.keys())))
-    act_1, act_2, act_3 = ("⚡" if u1 else "💤"), ("⚡" if u2 else "💤"), ("⚡" if u3 else "💤")
+    # --- LOGICA DE ACTIVIDAD PRECISA ---
+    u1 = globals().get("user_preference_c1", {})
+    u2 = globals().get("user_data_c2", {})
+    u3 = globals().get("chat_messages_c3", {})
+    
+    # Identificar actividad real por tráfico o contenido activo
+    is_active_mod = lambda d: "⚡" if d and len(d) > 0 and (up_s > 500 or down_s > 500) else "💤"
+    
+    act_1 = is_active_mod(u1)
+    act_2 = "⚡" if u2 and len(u2) > 0 else "💤"
+    act_3 = is_active_mod(u3)
+    
+    # Conteo de IDs únicos reales activos
+    unique_users = set(list(u1.keys()) + list(u2.keys()) + list(u3.keys()))
+    active_count = len(unique_users) if (act_1 == "⚡" or act_2 == "⚡" or act_3 == "⚡") else 0
 
     return (
         f"<b>{status_icon} SYSTEM CORE DASHBOARD</b>\n"
@@ -211,11 +222,15 @@ async def manager_callbacks(c, q):
         if uid in AUTHORIZED_USERS: del AUTHORIZED_USERS[uid]; save_authorized(AUTHORIZED_USERS)
         return await manager_callbacks(c, q._replace(data="view_users"))
     elif data == "clean_all":
+        # MATAR ACTIVIDADES Y LIMPIAR CACHE
         for d in ["downloads", "/kaggle/working/downloads"]:
             if os.path.exists(d): 
                 try: shutil.rmtree(d); os.makedirs(d)
                 except: pass
-        await q.answer("🧹 Purga Completa")
+        # RESET DE DICCIONARIOS DE ACTIVIDAD
+        for var in ["user_preference_c1", "user_data_c2", "chat_messages_c3"]:
+            if var in globals(): globals()[var].clear()
+        await q.answer("🧹 PURGA TOTAL COMPLETADA", show_alert=True)
     elif data == "all_on":
         for k in BOT_STATUS: BOT_STATUS[k] = True
     elif data == "all_off":
