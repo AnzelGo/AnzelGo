@@ -34,7 +34,12 @@ nest_asyncio.apply()
 # ==========================================
 
 DB_PATH = "authorized_users.json"
-panel_lock = asyncio.Lock() # Evita que los botones y el loop choquen
+panel_lock = asyncio.Lock()
+
+# Variables para el control de la tarea de actualización
+PANEL_CHAT_ID = None
+PANEL_MSG_ID = None
+UPDATE_RUNNING = False 
 
 def load_authorized():
     if os.path.exists(DB_PATH):
@@ -56,19 +61,15 @@ BOT4_TOKEN = os.getenv("BOT4_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
 ADMIN_USERNAME = "AnzZGTv1"
 
-# --- ESTADOS Y VARIABLES GLOBALES ---
+# --- ESTADOS ---
 BOT_STATUS = {1: False, 2: False, 3: False}
 ONLY_ADMIN_MODE = False
 AUTHORIZED_USERS = load_authorized() 
 WAITING_FOR_ID = False 
 VIEWING_LIST = False
-CURRENT_LOOP_TASK = None 
-PANEL_MSG_ID = None 
 
-# VARIABLES DE ACTIVIDAD REAL
 STATUS_C1 = {} 
 STATUS_C3 = {}
-# Bot 2 usa user_data_c2 si ya lo tienes definido globalmente
 if 'user_data_c2' not in globals(): user_data_c2 = {}
 
 NET_CACHE = {"last_sent": 0, "last_recv": 0, "last_time": 0}
@@ -79,7 +80,7 @@ app3 = Client("bot_limpieza", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_T
 app4 = Client("bot_master", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN)
 
 # ==========================================
-# LÓGICA PANEL DE CONTROL (DISEÑO SOLICITADO)
+# FUNCIONES DE FORMATO Y DISEÑO
 # ==========================================
 
 def get_main_menu():
@@ -133,26 +134,66 @@ def get_status_text():
         f"<code>──────────────────────</code>"
     )
 
-async def live_status_loop(client, chat_id, message_id):
+def format_speed(b):
+    if b < 1024: return f"{b:.2f} B/s"
+    elif b < 1024**2: return f"{b/1024:.2f} KB/s"
+    return f"{b/1024**2:.2f} MB/s"
+
+def format_total(b):
+    if b < 1024**3: return f"{b/1024**2:.1f} MB"
+    return f"{b/1024**3:.2f} GB"
+
+# ==========================================
+# LOOP INFINITO DE ACTUALIZACIÓN
+# ==========================================
+
+async def start_live_update(client):
+    global UPDATE_RUNNING
+    if UPDATE_RUNNING: return
+    UPDATE_RUNNING = True
     while True:
         try:
+            if PANEL_MSG_ID and PANEL_CHAT_ID and not WAITING_FOR_ID and not VIEWING_LIST:
+                async with panel_lock:
+                    await client.edit_message_text(
+                        PANEL_CHAT_ID, 
+                        PANEL_MSG_ID, 
+                        get_status_text(), 
+                        reply_markup=get_main_menu()
+                    )
+            await asyncio.sleep(3) # Pausa de 3 segundos
+        except (MessageNotModified, FloodWait):
+            await asyncio.sleep(5)
+            continue
+        except Exception:
             await asyncio.sleep(3)
-            if WAITING_FOR_ID or VIEWING_LIST: continue
-            
-            async with panel_lock: # Solo edita si nadie más está usando el panel
-                await client.edit_message_text(chat_id, message_id, get_status_text(), reply_markup=get_main_menu())
-        except (MessageNotModified, FloodWait): continue
-        except Exception: continue
+            continue
+
+# ==========================================
+# MANEJADORES
+# ==========================================
+
+@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
+async def start_controller(client, m):
+    global PANEL_MSG_ID, PANEL_CHAT_ID, WAITING_FOR_ID, VIEWING_LIST
+    WAITING_FOR_ID = False; VIEWING_LIST = False
+    
+    # Borrar el rastro anterior si existía para no duplicar procesos
+    sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu())
+    PANEL_MSG_ID = sent.id
+    PANEL_CHAT_ID = m.chat.id
+    
+    # Iniciar el loop si no está corriendo
+    asyncio.create_task(start_live_update(client))
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
     global ONLY_ADMIN_MODE, WAITING_FOR_ID, VIEWING_LIST
-    async with panel_lock: # Bloquea el loop mientras se procesa el clic
+    async with panel_lock:
         data = q.data
         if data.startswith("t_"): BOT_STATUS[int(data.split("_")[1])] = not BOT_STATUS[int(data.split("_")[1])]
         elif data == "toggle_admin": ONLY_ADMIN_MODE = not ONLY_ADMIN_MODE
-        elif data == "add_user": 
-            WAITING_FOR_ID = True; await q.answer("Envíame el ID"); return
+        elif data == "add_user": WAITING_FOR_ID = True; await q.answer("Envíame el ID"); return
         elif data == "view_users":
             if not AUTHORIZED_USERS: await q.answer("Lista vacía.", show_alert=True); return
             VIEWING_LIST = True
@@ -167,24 +208,6 @@ async def manager_callbacks(c, q):
         
         try: await q.message.edit_text(get_status_text(), reply_markup=get_main_menu())
         except: pass
-
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_controller(client, m):
-    global CURRENT_LOOP_TASK, PANEL_MSG_ID
-    if CURRENT_LOOP_TASK: CURRENT_LOOP_TASK.cancel()
-    sent = await m.reply_text(text=get_status_text(), reply_markup=get_main_menu())
-    PANEL_MSG_ID = sent.id
-    CURRENT_LOOP_TASK = asyncio.create_task(live_status_loop(client, m.chat.id, sent.id))
-
-# --- AUXILIARES ---
-def format_speed(b):
-    if b < 1024: return f"{b:.2f} B/s"
-    elif b < 1024**2: return f"{b/1024:.2f} KB/s"
-    return f"{b/1024**2:.2f} MB/s"
-
-def format_total(b):
-    if b < 1024**3: return f"{b/1024**2:.1f} MB"
-    return f"{b/1024**3:.2f} GB"
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
