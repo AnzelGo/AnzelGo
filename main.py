@@ -44,13 +44,12 @@ app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT
 
 
 # ==========================================
-# 🛡️ SISTEMA DE CONTROL DE ACCESO (PRO + DATABASE)
+# 🛡️ SISTEMA DE CONTROL DE ACCESO (REVISIÓN FINAL)
 # ==========================================
 
 CONFIG_FILE = "system_config.json"
 
 def load_config():
-    """Carga la configuración y whitelist desde un archivo local."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
@@ -60,15 +59,11 @@ def load_config():
     return "OFF", set()
 
 def save_config():
-    """Guarda el estado actual en el archivo JSON."""
-    data = {
-        "mode": SYSTEM_STATUS["mode"],
-        "allowed": list(ALLOWED_USERS)
-    }
+    data = {"mode": SYSTEM_STATUS["mode"], "allowed": list(ALLOWED_USERS)}
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f)
 
-# Inicialización
+# Inicialización global
 mode_saved, allowed_saved = load_config()
 SYSTEM_STATUS = {"mode": mode_saved}
 ALLOWED_USERS = allowed_saved
@@ -77,127 +72,113 @@ ADMIN_INPUT_STATE = {}
 async def check_permissions(client, message):
     user_id = message.from_user.id
     mode = SYSTEM_STATUS["mode"]
-    
     if user_id == ADMIN_ID: return True
 
-    is_private = mode == "PRIVATE"
-    is_off = mode == "OFF"
-
-    if is_off or (is_private and user_id not in ALLOWED_USERS):
-        if is_off:
-            text = "⛔ **SISTEMA EN MANTENIMIENTO**\n\nLos bots están temporalmente fuera de servicio por actualizaciones técnicas."
-            reply_markup = None # No aparece botón en mantenimiento
-        else:
-            text = (
-                "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                "Este bot está operando en **Modo Privado**. "
-                "Actualmente solo usuarios autorizados tienen acceso.\n\n"
-                "Pulsa abajo para solicitar acceso al administrador."
-            )
-            reply_markup = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 Solicitar Acceso", url=f"https://t.me/AnzZGTv1?text=Hola,%20solicito%20acceso%20al%20bot.%20Mi%20ID:%20{user_id}")]
-            ])
-        
-        await message.reply_text(text, reply_markup=reply_markup, quote=True)
+    if mode == "OFF":
+        await message.reply_text("⛔ **SISTEMA EN MANTENIMIENTO**\n\nLos bots están fuera de servicio temporalmente.", quote=True)
+        return False
+    
+    if mode == "PRIVATE" and user_id not in ALLOWED_USERS:
+        request_btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url=f"https://t.me/AnzZGTv1?text=Hola,%20solicito%20acceso.%20Mi%20ID:%20{user_id}")]])
+        await message.reply_text("🔒 **ACCESO RESTRINGIDO**\n\nEste bot es exclusivo para usuarios VIP.", reply_markup=request_btn, quote=True)
         return False
     return True
 
 # ==========================================
-# 👮‍♂️ LÓGICA DEL BOT 4 (MASTER CONTROLLER CORREGIDO)
+# 👮‍♂️ LÓGICA DEL BOT 4 (MASTER CONTROLLER V3)
 # ==========================================
 
-def get_main_panel_text():
-    status_map = {"ON": "🟢 MODO PÚBLICO", "OFF": "🔴 MANTENIMIENTO", "PRIVATE": "🔒 MODO PRIVADO (VIP)"}
-    return (
+def get_panel_ui():
+    """Genera texto y teclado actualizados según el estado real del sistema."""
+    status_map = {"ON": "🟢 PÚBLICO", "OFF": "🔴 MANTENIMIENTO", "PRIVATE": "🔒 PRIVADO (VIP)"}
+    curr_mode = SYSTEM_STATUS["mode"]
+    
+    text = (
         f"<b>👮‍♂️ PANEL DE CONTROL CENTRAL</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👑 <b>Propietario:</b> <code>Admin</code>\n"
-        f"📊 <b>Estado:</b> <code>{status_map.get(SYSTEM_STATUS['mode'], 'OFF')}</code>\n"
+        f"📊 <b>Estado Actual:</b> <code>{status_map.get(curr_mode)}</code>\n"
         f"👥 <b>Whitelist:</b> <code>{len(ALLOWED_USERS)} usuarios</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"<i>Gestione el acceso global del sistema:</i>"
+        f"<i>Gestione el acceso global:</i>"
     )
-
-def get_main_keyboard():
-    return InlineKeyboardMarkup([
+    
+    keyboard = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🟢 ON", callback_data="sys_on"),
-            InlineKeyboardButton("🔒 VIP", callback_data="sys_private"),
-            InlineKeyboardButton("🔴 OFF", callback_data="sys_off")
+            InlineKeyboardButton("🟢 ON", callback_data="set_ON"),
+            InlineKeyboardButton("🔒 VIP", callback_data="set_PRIVATE"),
+            InlineKeyboardButton("🔴 OFF", callback_data="set_OFF")
         ],
         [
-            InlineKeyboardButton("👤 Agregar Usuario", callback_data="usr_add"),
-            InlineKeyboardButton("📋 Ver/Borrar Lista", callback_data="usr_list")
+            InlineKeyboardButton("👤 Agregar ID", callback_data="ui_add"),
+            InlineKeyboardButton("📋 Ver Lista", callback_data="ui_list")
         ]
     ])
+    return text, keyboard
 
 @app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_controller(c, m):
     try: await m.delete()
     except: pass
-    await m.reply_text(get_main_panel_text(), reply_markup=get_main_keyboard())
+    text, markup = get_panel_ui()
+    await m.reply_text(text, reply_markup=markup)
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def manager_callbacks(c, q):
     data = q.data
     user_id = q.from_user.id
 
-    # --- Cambio de Modos (Refresco Visual Instantáneo) ---
-    if data.startswith("sys_"):
-        new_mode = data.split("_")[1].upper()
+    # 1. CAMBIO DE ESTADOS (INSTANTÁNEO)
+    if data.startswith("set_"):
+        new_mode = data.split("_")[1]
         SYSTEM_STATUS["mode"] = new_mode
         save_config()
+        text, markup = get_panel_ui()
+        await q.edit_message_text(text, reply_markup=markup)
         await q.answer(f"Modo: {new_mode}")
-        # Al editar aquí, se actualiza el estado visualmente en el panel
-        await q.edit_message_text(get_main_panel_text(), reply_markup=get_main_keyboard())
 
-    # --- Sección: Agregar Usuario ---
-    elif data == "usr_add":
-        ADMIN_INPUT_STATE[user_id] = {"action": "waiting_id", "msg_id": q.message.id}
+    # 2. MENU AGREGAR
+    elif data == "ui_add":
+        ADMIN_INPUT_STATE[user_id] = {"msg_id": q.message.id}
         await q.edit_message_text(
-            "<b>✍️ REGISTRO DE USUARIO</b>\n\nEnvíe el <b>ID numérico</b> de la persona.\n"
-            "<i>El panel se actualizará automáticamente.</i>",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Panel", callback_data="back_home")]])
+            "<b>✍️ REGISTRO DE USUARIO</b>\n\nEnvíe el ID numérico.\n<i>El panel se restaurará al finalizar.</i>",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Cancelar", callback_data="ui_home")]])
         )
 
-    # --- Sección: Listar Usuarios ---
-    elif data == "usr_list":
+    # 3. MENU LISTA (CORREGIDO)
+    elif data == "ui_list":
         if not ALLOWED_USERS:
-            await q.answer("La lista está vacía", show_alert=True)
+            await q.answer("Lista vacía ⚠️", show_alert=True)
             return
         
         buttons = []
         for uid in sorted(list(ALLOWED_USERS)):
-            buttons.append([InlineKeyboardButton(f"🗑️ Eliminar: {uid}", callback_data=f"del_{uid}")])
-        buttons.append([InlineKeyboardButton("🔙 Volver al Panel", callback_data="back_home")])
+            buttons.append([InlineKeyboardButton(f"🗑️ Borrar: {uid}", callback_data=f"del_{uid}")])
+        buttons.append([InlineKeyboardButton("🔙 Volver", callback_data="ui_home")])
         
-        await q.edit_message_text(
-            f"<b>👥 USUARIOS AUTORIZADOS ({len(ALLOWED_USERS)})</b>\n"
-            "Pulsa en un ID para revocar su acceso:",
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
+        await q.edit_message_text(f"<b>👥 USUARIOS VIP ({len(ALLOWED_USERS)})</b>", reply_markup=InlineKeyboardMarkup(buttons))
 
-    # --- Acción: Eliminar de Lista ---
+    # 4. ACCIÓN BORRAR
     elif data.startswith("del_"):
-        target_id = int(data.split("_")[1])
-        ALLOWED_USERS.discard(target_id)
+        uid_to_del = int(data.split("_")[1])
+        ALLOWED_USERS.discard(uid_to_del)
         save_config()
-        await q.answer("Eliminado")
+        await q.answer("Eliminado ✅")
         
-        # Si aún hay usuarios, refrescamos la lista; si no, volvemos al panel
+        # Si sigue habiendo gente, recarga la lista, si no, al home
         if ALLOWED_USERS:
-            buttons = []
-            for uid in sorted(list(ALLOWED_USERS)):
-                buttons.append([InlineKeyboardButton(f"🗑️ Eliminar: {uid}", callback_data=f"del_{uid}")])
-            buttons.append([InlineKeyboardButton("🔙 Volver al Panel", callback_data="back_home")])
-            await q.edit_message_text(f"<b>👥 USUARIOS AUTORIZADOS ({len(ALLOWED_USERS)})</b>", reply_markup=InlineKeyboardMarkup(buttons))
+            # Re-invocamos la lista manualmente para evitar loops
+            buttons = [[InlineKeyboardButton(f"🗑️ Borrar: {u}", callback_data=f"del_{u}")] for u in sorted(list(ALLOWED_USERS))]
+            buttons.append([InlineKeyboardButton("🔙 Volver", callback_data="ui_home")])
+            await q.edit_message_text(f"<b>👥 USUARIOS VIP ({len(ALLOWED_USERS)})</b>", reply_markup=InlineKeyboardMarkup(buttons))
         else:
-            await q.edit_message_text(get_main_panel_text(), reply_markup=get_main_keyboard())
+            text, markup = get_panel_ui()
+            await q.edit_message_text(text, reply_markup=markup)
 
-    # --- Acción: Volver al Panel (Corregido) ---
-    elif data == "back_home":
+    # 5. VOLVER AL HOME
+    elif data == "ui_home":
         ADMIN_INPUT_STATE.pop(user_id, None)
-        await q.edit_message_text(get_main_panel_text(), reply_markup=get_main_keyboard())
+        text, markup = get_panel_ui()
+        await q.edit_message_text(text, reply_markup=markup)
 
 @app4.on_message(filters.user(ADMIN_ID) & filters.text & ~filters.command("start"))
 async def handle_admin_inputs(c, m):
@@ -207,24 +188,19 @@ async def handle_admin_inputs(c, m):
     try: await m.delete()
     except: pass
 
-    if state["action"] == "waiting_id":
-        try:
-            new_id = int(m.text.strip())
-            ALLOWED_USERS.add(new_id)
-            save_config()
-            ADMIN_INPUT_STATE.pop(m.from_user.id)
-            
-            # Confirmación breve y regreso al panel
-            await c.edit_message_text(
-                m.chat.id, 
-                state["msg_id"], 
-                f"✅ <b>ID {new_id} Autorizado.</b>\n\nAcceso concedido correctamente.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Volver al Panel", callback_data="back_home")]])
-            )
-        except ValueError:
-            err = await m.reply_text("⚠️ ID Inválido.")
-            await asyncio.sleep(2)
-            await err.delete()
+    try:
+        new_id = int(m.text.strip())
+        ALLOWED_USERS.add(new_id)
+        save_config()
+        ADMIN_INPUT_STATE.pop(m.from_user.id)
+        
+        # Actualizamos el mensaje original del panel al estado inicial
+        text, markup = get_panel_ui()
+        await c.edit_message_text(m.chat.id, state["msg_id"], f"✅ <b>ID {new_id} agregado.</b>\n\n" + text, reply_markup=markup)
+    except ValueError:
+        err = await m.reply_text("❌ ID inválido.")
+        await asyncio.sleep(2)
+        await err.delete()
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
