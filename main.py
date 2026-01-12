@@ -75,51 +75,58 @@ PANEL_MSG_ID = None
 # app4 = ... (Este es el controlador)
 
 # ==========================================
-# 🛡️ MIDDLEWARE DE SEGURIDAD (POWER GUARD ADAPTADO)
+# 🛡️ LÓGICA DE PERMISOS CONECTADA AL PANEL
 # ==========================================
-# Este bloque protege a los bots 1, 2 y 3 basándose en el estado del Bot 4
 
-def create_access_guard():
-    async def access_guard(client, update):
-        user_id = update.from_user.id if update.from_user else 0
+async def check_permissions(client, update):
+    """
+    Verifica si el usuario tiene permiso para usar los bots 
+    basándose en el estado global del Bot 4 (SYSTEM_MODE).
+    """
+    # Detectar si es Mensaje o Callback
+    if isinstance(update, Message):
+        user_id = update.from_user.id
+        chat_type = update.chat.type.value
+        reply_method = update.reply_text
+    elif isinstance(update, CallbackQuery):
+        user_id = update.from_user.id
+        chat_type = update.message.chat.type.value
+        reply_method = update.answer
+    else:
+        return False
+
+    # 1. 👑 El ADMIN siempre entra (pase lo que pase)
+    if user_id == ADMIN_ID:
+        return True
+
+    # 2. 🔴 Modo MANTENIMIENTO (OFF)
+    if SYSTEM_MODE == "OFF":
+        msg_off = "⛔ **SISTEMA EN MANTENIMIENTO**\nLos servicios están temporalmente apagados desde el panel central."
         
-        # 1. Si es el ADMIN, pasa siempre
-        if user_id == ADMIN_ID:
-            return 
+        if isinstance(update, CallbackQuery):
+            await reply_method("⛔ Mantenimiento activo.", show_alert=True)
+        elif chat_type == "private":
+            await reply_method(msg_off, quote=True)
+        return False
 
-        # 2. Modo MANTENIMIENTO (OFF)
-        if SYSTEM_MODE == "OFF":
-            msg_off = "⛔ **SISTEMA EN MANTENIMIENTO**\nIntente más tarde."
+    # 3. 🔒 Modo PRIVADO (VIP)
+    if SYSTEM_MODE == "PRIVATE":
+        if user_id not in ALLOWED_USERS:
+            msg_priv = "🔒 **ACCESO RESTRINGIDO**\nEste bot está en modo privado. Solo usuarios en la lista VIP pueden usarlo."
+            btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url="https://t.me/AnzZGTv1")]])
+            
             if isinstance(update, CallbackQuery):
-                try: await update.answer("⛔ Mantenimiento activo.", show_alert=True)
-                except: pass
-            elif isinstance(update, Message) and update.chat.type.value == "private":
-                try: await update.reply_text(msg_off, quote=True)
-                except: pass
-            raise StopPropagation
+                await reply_method("🔒 Acceso Denegado (VIP)", show_alert=True)
+            elif chat_type == "private":
+                # Si es mensaje, respondemos con botón
+                if isinstance(update, Message):
+                    await update.reply_text(msg_priv, reply_markup=btn, quote=True)
+                else:
+                    await reply_method(msg_priv, show_alert=True)
+            return False
 
-        # 3. Modo PRIVADO (VIP)
-        if SYSTEM_MODE == "PRIVATE":
-            if user_id not in ALLOWED_USERS:
-                msg_priv = "🔒 **ACCESO VIP REQUERIDO**\nSolo usuarios autorizados."
-                btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url=f"https://t.me/AnzZGTv1")]])
-                
-                if isinstance(update, CallbackQuery):
-                    try: await update.answer("🔒 Acceso solo VIP.", show_alert=True)
-                    except: pass
-                elif isinstance(update, Message) and update.chat.type.value == "private":
-                    try: await update.reply_text(msg_priv, reply_markup=btn, quote=True)
-                    except: pass
-                raise StopPropagation
-                
-        # Si es "ON", el código sigue su curso normal
-        
-    return access_guard
-
-# APLICA ESTO A TUS BOTS ESCLAVOS (1, 2, 3)
-# guard = create_access_guard()
-# app1.add_handler(MessageHandler(guard), group=-1)
-# app1.add_handler(CallbackQueryHandler(guard), group=-1)
+    # 🟢 Si está en ON o el usuario es VIP/Admin, retorna True
+    return True
 
 # ==========================================
 # 🎮 CONTROLADOR (BOT 4) - LÓGICA ROBUSTA
