@@ -43,159 +43,229 @@ app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT
 app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"))
 
 
-
 # ==========================================
-# 🛡️ CONTROL DE ACCESO - VERSIÓN ESTABLE
+# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL (ESTILO REFERENCIA)
 # ==========================================
 
 CONFIG_FILE = "system_config.json"
-# ⚠️ ASEGÚRATE DE DEFINIR TU ADMIN_ID AQUÍ O QUE VENGA DE TU ARCHIVO PRINCIPAL
-# ADMIN_ID = 12345678 
+ADMIN_ID = int(os.getenv("ADMIN_ID", "12345678")) # Asegúrate que esto cargue tu ID real
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
-                return data.get("mode", "OFF"), set(data.get("allowed", []))
-        except: return "OFF", set()
-    return "OFF", set()
+                return data.get("mode", "OFF"), data.get("allowed", [])
+        except: return "OFF", []
+    return "OFF", []
 
 def save_config():
-    try:
-        data = {"mode": SYSTEM_STATUS["mode"], "allowed": list(ALLOWED_USERS)}
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(data, f)
-    except: pass
+    data = {"mode": SYSTEM_MODE, "allowed": ALLOWED_USERS}
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f)
 
-mode_saved, allowed_saved = load_config()
-SYSTEM_STATUS = {"mode": mode_saved}
-ALLOWED_USERS = allowed_saved
-ADMIN_INPUT_STATE = {}
+# --- VARIABLES GLOBALES (Igual que tu código funcional) ---
+SYSTEM_MODE, ALLOWED_USERS = load_config() # Modos: "ON", "OFF", "PRIVATE"
+WAITING_FOR_ID = False
+VIEWING_LIST = False
+PANEL_MSG_ID = None
 
-# --- LÓGICA DE PERMISOS ---
-async def check_permissions(client, message):
-    user_id = message.from_user.id
-    if user_id == ADMIN_ID: return True
-    
-    mode = SYSTEM_STATUS["mode"]
-    if mode == "OFF":
-        await message.reply_text("🔴 **SISTEMA APAGADO**", quote=True)
-        return False
-    if mode == "PRIVATE" and user_id not in ALLOWED_USERS:
-        await message.reply_text("🔒 **ACCESO VIP REQUERIDO**", quote=True)
-        return False
-    return True
+# Definición de clientes (Asumo que ya los tienes iniciados como en tu ejemplo)
+# app1 = ... 
+# app4 = ... (Este es el controlador)
 
 # ==========================================
-# 👮‍♂️ PANEL DE CONTROL CENTRAL
+# 🛡️ MIDDLEWARE DE SEGURIDAD (POWER GUARD ADAPTADO)
+# ==========================================
+# Este bloque protege a los bots 1, 2 y 3 basándose en el estado del Bot 4
+
+def create_access_guard():
+    async def access_guard(client, update):
+        user_id = update.from_user.id if update.from_user else 0
+        
+        # 1. Si es el ADMIN, pasa siempre
+        if user_id == ADMIN_ID:
+            return 
+
+        # 2. Modo MANTENIMIENTO (OFF)
+        if SYSTEM_MODE == "OFF":
+            msg_off = "⛔ **SISTEMA EN MANTENIMIENTO**\nIntente más tarde."
+            if isinstance(update, CallbackQuery):
+                try: await update.answer("⛔ Mantenimiento activo.", show_alert=True)
+                except: pass
+            elif isinstance(update, Message) and update.chat.type.value == "private":
+                try: await update.reply_text(msg_off, quote=True)
+                except: pass
+            raise StopPropagation
+
+        # 3. Modo PRIVADO (VIP)
+        if SYSTEM_MODE == "PRIVATE":
+            if user_id not in ALLOWED_USERS:
+                msg_priv = "🔒 **ACCESO VIP REQUERIDO**\nSolo usuarios autorizados."
+                btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url=f"https://t.me/AnzZGTv1")]])
+                
+                if isinstance(update, CallbackQuery):
+                    try: await update.answer("🔒 Acceso solo VIP.", show_alert=True)
+                    except: pass
+                elif isinstance(update, Message) and update.chat.type.value == "private":
+                    try: await update.reply_text(msg_priv, reply_markup=btn, quote=True)
+                    except: pass
+                raise StopPropagation
+                
+        # Si es "ON", el código sigue su curso normal
+        
+    return access_guard
+
+# APLICA ESTO A TUS BOTS ESCLAVOS (1, 2, 3)
+# guard = create_access_guard()
+# app1.add_handler(MessageHandler(guard), group=-1)
+# app1.add_handler(CallbackQueryHandler(guard), group=-1)
+
+# ==========================================
+# 🎮 CONTROLADOR (BOT 4) - LÓGICA ROBUSTA
 # ==========================================
 
-def get_panel_ui():
-    m = SYSTEM_STATUS["mode"]
-    status_emoji = "🟢" if m == "ON" else "🔒" if m == "PRIVATE" else "🔴"
-    
-    text = (
-        f"<b>🛠 PANEL DE CONTROL</b>\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"<b>ESTADO:</b> {status_emoji} {m}\n"
-        f"<b>VIPs:</b> {len(ALLOWED_USERS)}\n"
-        f"━━━━━━━━━━━━━━"
-    )
-    
-    kb = InlineKeyboardMarkup([
+def get_panel_menu():
+    """Genera los botones interruptores basándose en el estado global."""
+    # Indicadores visuales
+    s_on = "🟢" if SYSTEM_MODE == "ON" else "⚫"
+    s_vip = "🔒" if SYSTEM_MODE == "PRIVATE" else "⚫"
+    s_off = "🔴" if SYSTEM_MODE == "OFF" else "⚫"
+
+    return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("🟢 ON", callback_data="set_ON"),
-            InlineKeyboardButton("🔒 VIP", callback_data="set_PRIVATE"),
-            InlineKeyboardButton("🔴 OFF", callback_data="set_OFF")
+            InlineKeyboardButton(f"{s_on} PÚBLICO", callback_data="set_ON"),
+            InlineKeyboardButton(f"{s_vip} PRIVADO", callback_data="set_PRIVATE"),
+            InlineKeyboardButton(f"{s_off} APAGADO", callback_data="set_OFF")
         ],
         [
-            InlineKeyboardButton("👤 +ID", callback_data="ui_add"),
-            InlineKeyboardButton("📋 LISTA", callback_data="ui_list")
+            InlineKeyboardButton("➕ AGREGAR ID", callback_data="ui_add"),
+            InlineKeyboardButton(f"📋 LISTA VIP ({len(ALLOWED_USERS)})", callback_data="ui_list")
+        ],
+        [
+            InlineKeyboardButton("🔄 REFRESCAR PANEL", callback_data="refresh")
         ]
     ])
-    return text, kb
 
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_controller(c, m):
-    text, markup = get_panel_ui()
-    await m.reply_text(text, reply_markup=markup)
+def get_panel_text():
+    """Texto con formato fijo para evitar saltos."""
+    return (
+        f"👮‍♂️ <b>SISTEMA DE CONTROL DE ACCESO</b>\n"
+        f"<code>──────────────────────</code>\n"
+        f"📊 <b>Estado Actual:</b> <code>{SYSTEM_MODE}</code>\n"
+        f"👥 <b>Usuarios VIP:</b>  <code>{len(ALLOWED_USERS)}</code>\n"
+        f"<code>──────────────────────</code>\n"
+        f"<i>Seleccione el modo de operación:</i>"
+    )
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
-async def manager_callbacks(c, q):
+async def controller_callbacks(c, q):
+    global SYSTEM_MODE, WAITING_FOR_ID, VIEWING_LIST, ALLOWED_USERS
     data = q.data
-    uid = q.from_user.id
 
     try:
-        # 1. CAMBIO DE MODO
+        # --- INTERRUPTORES DE MODO (SWITCHES) ---
         if data.startswith("set_"):
             new_mode = data.split("_")[1]
-            SYSTEM_STATUS["mode"] = new_mode
-            save_config()
-            t, m = get_panel_ui()
-            await q.edit_message_text(t, reply_markup=m)
+            if SYSTEM_MODE != new_mode:
+                SYSTEM_MODE = new_mode
+                save_config()
+                # Actualización directa e instantánea
+                await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
+            else:
+                await q.answer("⚠️ Ese modo ya está activo.")
+            return
 
-        # 2. MENU AGREGAR
+        # --- GESTIÓN DE UI ---
+        if data == "refresh":
+            WAITING_FOR_ID = False
+            VIEWING_LIST = False
+            await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
+            await q.answer("Actualizado")
+
         elif data == "ui_add":
-            ADMIN_INPUT_STATE[uid] = q.message.id
-            await q.edit_message_text(
-                "✍️ <b>ENVÍA EL ID:</b>",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")]])
+            WAITING_FOR_ID = True
+            VIEWING_LIST = False
+            await q.message.edit_text(
+                "✍️ <b>MODO EDICIÓN</b>\n<code>──────────────────────</code>\n\nEnvíe el <b>ID NUMÉRICO</b> ahora.\nUse el botón volver para cancelar.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 VOLVER", callback_data="refresh")]])
             )
-
-        # 3. LISTA
+        
         elif data == "ui_list":
             if not ALLOWED_USERS:
-                await q.answer("Lista vacía", show_alert=True)
+                await q.answer("📂 Lista vacía", show_alert=True)
                 return
-            btns = [[InlineKeyboardButton(f"❌ {u}", callback_data=f"del_{u}")] for u in ALLOWED_USERS]
-            btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")])
-            await q.edit_message_text("<b>USUARIOS VIP:</b>", reply_markup=InlineKeyboardMarkup(btns))
+            
+            VIEWING_LIST = True
+            # Generar botones de borrado
+            btns = []
+            for uid in ALLOWED_USERS:
+                btns.append([InlineKeyboardButton(f"🗑 Eliminar: {uid}", callback_data=f"del_{uid}")])
+            btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="refresh")])
+            
+            await q.message.edit_text(
+                f"📋 <b>GESTIÓN DE VIPS ({len(ALLOWED_USERS)})</b>\nPulse para eliminar acceso:",
+                reply_markup=InlineKeyboardMarkup(btns)
+            )
 
-        # 4. BORRAR
+        # --- ACCIÓN DE BORRADO ---
         elif data.startswith("del_"):
-            u_del = int(data.split("_")[1])
-            ALLOWED_USERS.discard(u_del)
-            save_config()
-            if not ALLOWED_USERS:
-                t, m = get_panel_ui()
-                await q.edit_message_text(t, reply_markup=m)
+            uid_to_del = int(data.split("_")[1])
+            if uid_to_del in ALLOWED_USERS:
+                ALLOWED_USERS.remove(uid_to_del)
+                save_config()
+                
+                # Recargamos la lista o volvemos si está vacía
+                if ALLOWED_USERS:
+                    # Misma lógica de ui_list para refrescar
+                    btns = [[InlineKeyboardButton(f"🗑 Eliminar: {u}", callback_data=f"del_{u}")] for u in ALLOWED_USERS]
+                    btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="refresh")])
+                    await q.message.edit_text(f"📋 <b>GESTIÓN DE VIPS ({len(ALLOWED_USERS)})</b>", reply_markup=InlineKeyboardMarkup(btns))
+                else:
+                    # Si se vacía, volvemos al home
+                    VIEWING_LIST = False
+                    await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
             else:
-                # Recargar lista
-                btns = [[InlineKeyboardButton(f"❌ {u}", callback_data=f"del_{u}")] for u in ALLOWED_USERS]
-                btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")])
-                await q.edit_message_text("<b>USUARIOS VIP:</b>", reply_markup=InlineKeyboardMarkup(btns))
+                await q.answer("ID no encontrado")
 
-        # 5. HOME
-        elif data == "ui_home":
-            ADMIN_INPUT_STATE.pop(uid, None)
-            t, m = get_panel_ui()
-            await q.edit_message_text(t, reply_markup=m)
-
-        await q.answer()
-
-    except MessageNotModified:
-        await q.answer()
     except Exception as e:
-        print(f"DEBUG: {e}")
-        await q.answer("⚠️ Reintenta", show_alert=False)
+        print(f"Error UI: {e}")
+        # En caso de error crítico, intentamos restaurar el panel principal
+        try: await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
+        except: pass
 
-@app4.on_message(filters.user(ADMIN_ID) & filters.text & ~filters.command("start"))
-async def handle_inputs(c, m):
-    uid = m.from_user.id
-    if uid not in ADMIN_INPUT_STATE: return
+@app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
+async def admin_input_listener(c, m):
+    global WAITING_FOR_ID, ALLOWED_USERS
+    
+    # Solo procesamos si la bandera está activa (Igual que tu código funcional)
+    if WAITING_FOR_ID and m.text:
+        try:
+            # Extraemos números por si hay texto extra
+            target_id = int("".join(filter(str.isdigit, m.text)))
+            
+            if target_id not in ALLOWED_USERS:
+                ALLOWED_USERS.append(target_id)
+                save_config()
+                await m.reply_text(f"✅ ID <code>{target_id}</code> autorizado.")
+            else:
+                await m.reply_text(f"⚠️ El ID <code>{target_id}</code> ya estaba autorizado.")
+            
+            # Reset de bandera y mostramos panel de nuevo
+            WAITING_FOR_ID = False
+            await m.reply_text(get_panel_text(), reply_markup=get_panel_menu())
+            
+        except ValueError:
+            await m.reply_text("❌ Error: Envía solo números.")
 
-    try:
-        new_id = int(m.text.strip())
-        ALLOWED_USERS.add(new_id)
-        save_config()
-        msg_id = ADMIN_INPUT_STATE.pop(uid)
-        
-        await m.delete()
-        t, mk = get_panel_ui()
-        await c.edit_message_text(m.chat.id, msg_id, f"✅ <b>{new_id} añadido</b>\n\n{t}", reply_markup=mk)
-    except:
-        await m.reply_text("❌ ID Inválido", delete_in=3) # Ajusta según tus utilidades
+@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
+async def start_handler(c, m):
+    global WAITING_FOR_ID, VIEWING_LIST
+    # Reinicio de estados al poner /start
+    WAITING_FOR_ID = False
+    VIEWING_LIST = False
+    
+    await m.reply_text(get_panel_text(), reply_markup=get_panel_menu())
 
 
 # ==============================================================================
