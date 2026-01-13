@@ -42,13 +42,17 @@ app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT
 app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"))
 app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"))
 
-
 # ==========================================
 # ⚙️ CONFIGURACIÓN Y PERSISTENCIA (ESTADO)
 # ==========================================
 
 CONFIG_FILE = "system_config.json"
-ADMIN_ID = int(os.getenv("ADMIN_ID", "12345678"))
+
+# Corrección: Definimos ADMIN_ID una sola vez y de forma segura
+try:
+    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+except:
+    ADMIN_ID = 0
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -75,6 +79,7 @@ async def check_permissions(client, update):
     user_id = update.from_user.id if update.from_user else 0
     chat_type = update.chat.type.value if hasattr(update, 'chat') else "private"
     
+    # El admin siempre pasa
     if user_id == ADMIN_ID: return True
 
     if SYSTEM_MODE == "OFF":
@@ -139,7 +144,7 @@ async def purge_and_send_panel(c, chat_id, text=None, markup=None):
     
     if ids_to_delete:
         try: await c.delete_messages(chat_id, ids_to_delete)
-        except: pass # Si falla alguno antiguo, no importa
+        except: pass 
         
     return await c.send_message(chat_id, text or get_panel_text(), reply_markup=markup or get_panel_menu())
 
@@ -153,13 +158,11 @@ async def controller_callbacks(c, q):
         if SYSTEM_MODE != new_mode:
             SYSTEM_MODE = new_mode
             save_config()
-            # Editamos en lugar de borrar para que sea fluido al cambiar modos
             await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
         else: await q.answer(f"Ya está en {new_mode}")
 
     elif data == "ui_add":
         WAITING_FOR_ID = True
-        # Editamos el mensaje actual para pedir el ID
         await q.message.edit_text("✍️ <b>INGRESE ID</b>\n\nEnvíe el número para autorizar:", 
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")]]))
     
@@ -182,16 +185,14 @@ async def controller_callbacks(c, q):
             ALLOWED_USERS.remove(uid)
             save_config()
             await q.answer("Eliminado")
-            # Truco para recargar la lista sin spammear
+            # Recargar lista dinámicamente
             if ALLOWED_USERS: 
-                # Re-llamamos a la lógica de ui_list manualmente
                 btns = []
                 for u in ALLOWED_USERS:
-                     btns.append([InlineKeyboardButton(f"🗑 {u}", callback_data=f"del_{u}")]) # Simplificado para velocidad
+                     btns.append([InlineKeyboardButton(f"🗑 {u}", callback_data=f"del_{u}")])
                 btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")])
                 await q.message.edit_reply_markup(InlineKeyboardMarkup(btns))
                 return
-        # Si no quedan usuarios o error, volvemos al home
         await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
 
     elif data == "ui_home":
@@ -201,7 +202,6 @@ async def controller_callbacks(c, q):
 @app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
 async def admin_input_listener(c, m):
     global WAITING_FOR_ID, ALLOWED_USERS
-    # Si estamos esperando ID y hay texto
     if WAITING_FOR_ID and m.text:
         try:
             target_id = int("".join(filter(str.isdigit, m.text)))
@@ -209,22 +209,32 @@ async def admin_input_listener(c, m):
                 ALLOWED_USERS.append(target_id)
                 save_config()
             WAITING_FOR_ID = False
-            # AQUÍ LA MAGIA: Borramos todo (input del admin + mensaje del bot) y mostramos panel limpio
+            # Limpieza y retorno al panel
             await purge_and_send_panel(c, m.chat.id)
         except:
-            # Si falla, borramos el mensaje erróneo del usuario y avisamos brevemente
             try: await m.delete() 
             except: pass
             tmp = await m.reply("❌ ID Inválido")
-            await asyncio.sleep(1.5)
-            await tmp.delete()
+            await asyncio.sleep(1.5); await tmp.delete()
 
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
+# NOTA: He quitado el filtro user(ADMIN_ID) aquí para que te responda
+# aunque tu configuración de ID esté mal, y te diga cuál es tu ID real.
+@app4.on_message(filters.command("start"))
 async def start_handler(c, m):
     global WAITING_FOR_ID
+    
+    # Verificación manual de ID para dar feedback si falla
+    if m.from_user.id != ADMIN_ID:
+        return await m.reply_text(
+            f"⛔ <b>ACCESO DENEGADO</b>\n\n"
+            f"No eres el administrador configurado.\n"
+            f"Tu ID es: <code>{m.from_user.id}</code>\n\n"
+            f"⚠️ Pon este número en la variable <code>ADMIN_ID</code> para acceder."
+        )
+
     WAITING_FOR_ID = False
-    # Al poner start, borra TODO lo anterior y muestra solo el panel
     await purge_and_send_panel(c, m.chat.id)
+
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
