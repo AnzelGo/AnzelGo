@@ -50,7 +50,7 @@ CONFIG_FILE = "system_config.json"
 
 # Corrección: Definimos ADMIN_ID una sola vez y de forma segura
 try:
-    ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+    ADMIN_ID = int(os.getenv("1806990534", "0"))
 except:
     ADMIN_ID = 0
 
