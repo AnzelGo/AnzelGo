@@ -740,15 +740,101 @@ async def thumbnail_handler_c2(client, message: Message):
         await show_rename_options_c2(client, chat_id, status_id, "Miniatura guardada. ¿Quieres renombrar el video?")
     except: await update_message_c2(client, chat_id, status_id, "❌ Error al descargar la miniatura.")
 
+# ==============================================================================
+# 🛠️ CORRECCIÓN DE SUBIDA POST-RENOMBRADO (BOT 2)
+# ==============================================================================
+
 @app2.on_message(filters.text & filters.private)
 async def rename_handler_c2(client, message: Message):
-    chat_id, user_info = message.chat.id, user_data_c2.get(message.chat.id)
-    if not user_info or user_info.get('state') != 'waiting_for_new_name': return
-    user_info['new_name'] = message.text.strip()
-    await message.delete()
-    await update_message_c2(client, chat_id, user_info['status_message_id'], f"✅ Nombre guardado. Preparando para subir...")
+    chat_id = message.chat.id
+    user_info = user_data_c2.get(chat_id)
+    
+    # Verificamos que realmente estemos esperando un nombre
+    if not user_info or user_info.get('state') != 'waiting_for_new_name':
+        return
+
+    # 1. Guardamos el nuevo nombre y limpiamos el mensaje del usuario
+    new_name = message.text.strip()
+    user_info['new_name'] = new_name
+    try: await message.delete()
+    except: pass
+
+    # 2. Actualizamos el mensaje de estado para que el usuario vea que hay actividad
+    status_id = user_info.get('status_message_id')
+    await update_message_c2(
+        client, 
+        chat_id, 
+        status_id, 
+        f"✅ Nombre establecido: <code>{new_name}</code>\n🚀 Iniciando subida inmediata..."
+    )
+
+    # 3. CAMBIO CRUCIAL: Forzamos el estado a 'uploading' y llamamos a la subida
     user_info['state'] = 'uploading'
-    await upload_final_video_c2(client, chat_id)
+    
+    # Ejecutamos la subida. Usamos create_task para que no bloquee el handler
+    asyncio.create_task(upload_final_video_c2(client, chat_id))
+
+# --- AJUSTE EN LA FUNCIÓN DE SUBIDA PARA RECONOCER EL NOMBRE ---
+async def upload_final_video_c2(client, chat_id):
+    user_info = user_data_c2.get(chat_id)
+    if not user_info or not user_info.get('final_path'):
+        return
+        
+    final_path = user_info['final_path']
+    status_id = user_info['status_message_id']
+    
+    # Determinar el nombre final del archivo
+    if user_info.get('new_name'):
+        # Si el usuario no puso .mp4, se lo ponemos nosotros
+        ext = os.path.splitext(final_path)[1] or ".mp4"
+        file_name = user_info['new_name'] if user_info['new_name'].endswith(ext) else user_info['new_name'] + ext
+    else:
+        file_name = os.path.basename(user_info.get('video_file_name', 'video.mp4'))
+
+    try:
+        status_message = await client.get_messages(chat_id, status_id)
+        start_time = time.time()
+        
+        # Parámetros de video (metadata)
+        probe = ffmpeg.probe(final_path)
+        video_stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), {})
+        duration = int(float(video_stream.get('duration', 0)))
+        width = int(video_stream.get('width', 0))
+        height = int(video_stream.get('height', 0))
+
+        # SUBIDA REAL
+        if user_info.get('send_as_file'):
+            await client.send_document(
+                chat_id=chat_id,
+                document=final_path,
+                file_name=file_name,
+                thumb=user_info.get('thumbnail_path'),
+                caption=f"📂 <b>Archivo:</b> <code>{file_name}</code>",
+                progress=progress_bar_handler_c2,
+                progress_args=(client, status_message, start_time, "⬆️ Subiendo")
+            )
+        else:
+            await client.send_video(
+                chat_id=chat_id,
+                video=final_path,
+                file_name=file_name,
+                caption=f"🎬 <b>Video:</b> <code>{file_name}</code>",
+                thumb=user_info.get('thumbnail_path'),
+                duration=duration,
+                width=width,
+                height=height,
+                supports_streaming=True,
+                progress=progress_bar_handler_c2,
+                progress_args=(client, status_message, start_time, "⬆️ Subiendo")
+            )
+        
+        await status_message.delete()
+        await client.send_message(chat_id, "✅ <b>Proceso Finalizado con éxito.</b>")
+        
+    except Exception as e:
+        await client.send_message(chat_id, f"❌ <b>Error en subida:</b>\n<code>{str(e)}</code>")
+    finally:
+        clean_up_c2(chat_id)
 
 # --- Menús Diferenciados Bot 2 ---
 async def show_compression_options_c2(client, chat_id, msg_id):
