@@ -42,17 +42,15 @@ app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT
 app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"))
 app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"))
 
+
 # ==========================================
 # ⚙️ CONFIGURACIÓN Y PERSISTENCIA (ESTADO)
 # ==========================================
 
 CONFIG_FILE = "system_config.json"
 
-# Corrección: Definimos ADMIN_ID una sola vez y de forma segura
-try:
-    ADMIN_ID = int(os.getenv("1806990534", "0"))
-except:
-    ADMIN_ID = 0
+# 🔥 TU ID FIJO (Para asegurar que siempre tengas acceso)
+ADMIN_ID = 1806990534 
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -79,7 +77,7 @@ async def check_permissions(client, update):
     user_id = update.from_user.id if update.from_user else 0
     chat_type = update.chat.type.value if hasattr(update, 'chat') else "private"
     
-    # El admin siempre pasa
+    # El admin siempre pasa (Tu ID: 1806990534)
     if user_id == ADMIN_ID: return True
 
     if SYSTEM_MODE == "OFF":
@@ -217,24 +215,12 @@ async def admin_input_listener(c, m):
             tmp = await m.reply("❌ ID Inválido")
             await asyncio.sleep(1.5); await tmp.delete()
 
-# NOTA: He quitado el filtro user(ADMIN_ID) aquí para que te responda
-# aunque tu configuración de ID esté mal, y te diga cuál es tu ID real.
-@app4.on_message(filters.command("start"))
+@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_handler(c, m):
     global WAITING_FOR_ID
-    
-    # Verificación manual de ID para dar feedback si falla
-    if m.from_user.id != ADMIN_ID:
-        return await m.reply_text(
-            f"⛔ <b>ACCESO DENEGADO</b>\n\n"
-            f"No eres el administrador configurado.\n"
-            f"Tu ID es: <code>{m.from_user.id}</code>\n\n"
-            f"⚠️ Pon este número en la variable <code>ADMIN_ID</code> para acceder."
-        )
-
     WAITING_FOR_ID = False
+    # Limpieza agresiva al iniciar
     await purge_and_send_panel(c, m.chat.id)
-
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
