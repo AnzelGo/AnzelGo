@@ -129,17 +129,17 @@ async def check_permissions(client, update):
     return True
 
 # ==========================================
-# 🎮 CONTROLADOR (BOT 4) - LIMPIEZA ABSOLUTA
+# ==========================================
+# 🎮 CONTROLADOR (BOT 4) - PANEL ÚNICO (SIN REPETICIÓN)
 # ==========================================
 
-# ID de Administrador Fija para evitar fallos de entorno
 ADMIN_ID = 1806990534 
+PANEL_MSG_ID = None  # Variable para rastrear el mensaje único del panel
 
 def get_panel_menu():
     m_on = "🟢" if SYSTEM_MODE == "ON" else "⚪"
     m_vip = "🔒" if SYSTEM_MODE == "PRIVATE" else "⚪"
     m_off = "🔴" if SYSTEM_MODE == "OFF" else "⚪"
-    
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(f"{m_on} PÚBLICO", callback_data="set_ON"),
@@ -162,44 +162,17 @@ def get_panel_text():
         f"<i>Seleccione el modo de operación:</i>"
     )
 
-async def refresh_clean_panel(c, chat_id):
-    """
-    PURGA TOTAL: Elimina todos los mensajes previos del admin y del bot
-    para que solo el panel actual sea visible.
-    """
-    try:
-        # Buscamos y recolectamos IDs de los últimos 100 mensajes
-        messages_to_delete = []
-        async for message in c.get_chat_history(chat_id, limit=100):
-            messages_to_delete.append(message.id)
-        
-        # Borrado masivo (Bulk delete)
-        if messages_to_delete:
-            await c.delete_messages(chat_id, messages_to_delete)
-    except Exception as e:
-        print(f"Error en limpieza: {e}")
-
-    # Envía el nuevo panel tras la limpieza
-    return await c.send_message(
-        chat_id, 
-        get_panel_text(), 
-        reply_markup=get_panel_menu()
-    )
-
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def controller_callbacks(c, q):
-    global SYSTEM_MODE, WAITING_FOR_ID, ALLOWED_USERS
+    global SYSTEM_MODE, WAITING_FOR_ID, ALLOWED_USERS, PANEL_MSG_ID
     data = q.data
-    
+    PANEL_MSG_ID = q.message.id # Aseguramos capturar el ID del mensaje actual
+
     if data.startswith("set_"):
         new_mode = data.split("_")[1]
-        if SYSTEM_MODE != new_mode:
-            SYSTEM_MODE = new_mode
-            save_config()
-            # Editamos el mensaje actual para no generar basura visual
-            await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
-        else:
-            await q.answer(f"El modo {new_mode} ya está activo.")
+        SYSTEM_MODE = new_mode
+        save_config()
+        await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
 
     elif data == "ui_add":
         WAITING_FOR_ID = True
@@ -209,24 +182,14 @@ async def controller_callbacks(c, q):
         )
     
     elif data == "ui_list":
-        if not ALLOWED_USERS: 
-            return await q.answer("La lista VIP está vacía.", show_alert=True)
-        
-        btns = []
-        for uid in ALLOWED_USERS:
-            btns.append([InlineKeyboardButton(f"🗑 ID: {uid}", callback_data=f"del_{uid}")])
+        if not ALLOWED_USERS: return await q.answer("Lista vacía.", show_alert=True)
+        btns = [[InlineKeyboardButton(f"🗑 ID: {u}", callback_data=f"del_{u}")] for u in ALLOWED_USERS]
         btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")])
-        
         await q.message.edit_text("📋 <b>GESTIÓN DE ACCESOS VIP</b>", reply_markup=InlineKeyboardMarkup(btns))
 
     elif data.startswith("del_"):
         uid = int(data.split("_")[1])
-        if uid in ALLOWED_USERS:
-            ALLOWED_USERS.remove(uid)
-            save_config()
-            await q.answer("ID Eliminada correctamente")
-            
-        # Refrescar la lista si quedan usuarios, sino volver al home
+        if uid in ALLOWED_USERS: ALLOWED_USERS.remove(uid); save_config()
         if ALLOWED_USERS:
             btns = [[InlineKeyboardButton(f"🗑 ID: {u}", callback_data=f"del_{u}")] for u in ALLOWED_USERS]
             btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")])
@@ -240,24 +203,34 @@ async def controller_callbacks(c, q):
 
 @app4.on_message(filters.user(ADMIN_ID) & filters.private)
 async def admin_input_listener(c, m):
-    global WAITING_FOR_ID, ALLOWED_USERS
+    global WAITING_FOR_ID, ALLOWED_USERS, PANEL_MSG_ID
     
-    # Procesar entrada de ID si el bot la está esperando
+    # 1. Si recibimos un ID mientras esperamos
     if WAITING_FOR_ID and m.text and not m.text.startswith("/"):
         try:
-            # Extrae solo los dígitos por seguridad
             target_id = int("".join(filter(str.isdigit, m.text)))
             if target_id not in ALLOWED_USERS:
                 ALLOWED_USERS.append(target_id)
                 save_config()
             WAITING_FOR_ID = False
-        except:
-            pass 
+            
+            # BORRAMOS tu mensaje (el número) para que no ensucie
+            await m.delete()
+            
+            # EDITAMOS el panel existente para volver al menú principal
+            if PANEL_MSG_ID:
+                await c.edit_message_text(m.chat.id, PANEL_MSG_ID, get_panel_text(), reply_markup=get_panel_menu())
+                return # Finalizamos aquí para evitar enviar otro mensaje
+        except: pass
 
-    # IMPORTANTE: No importa si es /start o un texto, 
-    # se borra todo y se reenvía el panel limpio.
-    await refresh_clean_panel(c, m.chat.id)
-
+    # 2. Si es /start o cualquier otra cosa, limpieza total y envío de UN SOLO panel
+    try:
+        async for message in c.get_chat_history(m.chat.id, limit=50):
+            await message.delete()
+    except: pass
+    
+    new_panel = await c.send_message(m.chat.id, get_panel_text(), reply_markup=get_panel_menu())
+    PANEL_MSG_ID = new_panel.id
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
