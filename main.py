@@ -130,25 +130,30 @@ async def check_permissions(client, update):
 
 # ==========================================
 # ==========================================
-# 🎮 CONTROLADOR (BOT 4) - PANEL ÚNICO (SIN REPETICIÓN)
+# ==========================================
+# 🎮 CONTROLADOR (BOT 4) - DISEÑO COMPACTO Y NOMBRES
 # ==========================================
 
 ADMIN_ID = 1806990534 
-PANEL_MSG_ID = None  # Variable para rastrear el mensaje único del panel
+PANEL_MSG_ID = None 
 
 def get_panel_menu():
+    # Usamos indicadores visuales minimalistas para mantener el ancho parejo
     m_on = "🟢" if SYSTEM_MODE == "ON" else "⚪"
     m_vip = "🔒" if SYSTEM_MODE == "PRIVATE" else "⚪"
     m_off = "🔴" if SYSTEM_MODE == "OFF" else "⚪"
+    
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"{m_on} PÚBLICO", callback_data="set_ON"),
-            InlineKeyboardButton(f"{m_vip} PRIVADO", callback_data="set_PRIVATE"),
-            InlineKeyboardButton(f"{m_off} APAGADO", callback_data="set_OFF")
+            InlineKeyboardButton(f"{m_on} ON", callback_data="set_ON"),
+            InlineKeyboardButton(f"{m_vip} VIP", callback_data="set_PRIVATE"),
+            InlineKeyboardButton(f"{m_off} OFF", callback_data="set_OFF")
         ],
         [
-            InlineKeyboardButton("➕ AGREGAR ID", callback_data="ui_add"),
-            InlineKeyboardButton(f"📋 LISTA VIP ({len(ALLOWED_USERS)})", callback_data="ui_list")
+            InlineKeyboardButton("➕ AGREGAR USUARIO", callback_data="ui_add")
+        ],
+        [
+            InlineKeyboardButton(f"📋 LISTA AUTORIZADOS ({len(ALLOWED_USERS)})", callback_data="ui_list")
         ]
     ])
 
@@ -156,17 +161,17 @@ def get_panel_text():
     return (
         f"👮‍♂️ <b>SISTEMA DE CONTROL DE ACCESO</b>\n"
         f"<code>──────────────────────</code>\n"
-        f"📊 <b>Estado Actual:</b> <code>{SYSTEM_MODE}</code>\n"
-        f"👥 <b>Usuarios VIP:</b>  <code>{len(ALLOWED_USERS)}</code>\n"
+        f"📊 <b>Estado:</b> <code>{SYSTEM_MODE}</code>\n"
+        f"👥 <b>Usuarios:</b> <code>{len(ALLOWED_USERS)}</code>\n"
         f"<code>──────────────────────</code>\n"
-        f"<i>Seleccione el modo de operación:</i>"
+        f"<i>Gestione los accesos del sistema:</i>"
     )
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def controller_callbacks(c, q):
     global SYSTEM_MODE, WAITING_FOR_ID, ALLOWED_USERS, PANEL_MSG_ID
     data = q.data
-    PANEL_MSG_ID = q.message.id # Aseguramos capturar el ID del mensaje actual
+    PANEL_MSG_ID = q.message.id 
 
     if data.startswith("set_"):
         new_mode = data.split("_")[1]
@@ -177,23 +182,38 @@ async def controller_callbacks(c, q):
     elif data == "ui_add":
         WAITING_FOR_ID = True
         await q.message.edit_text(
-            "✍️ <b>INGRESE ID</b>\n\nEnvíe el número para autorizar acceso:", 
+            "✍️ <b>INGRESE ID DEL USUARIO</b>\n\nEl sistema buscará el nombre automáticamente:", 
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 CANCELAR", callback_data="ui_home")]])
         )
     
     elif data == "ui_list":
-        if not ALLOWED_USERS: return await q.answer("Lista vacía.", show_alert=True)
-        btns = [[InlineKeyboardButton(f"🗑 ID: {u}", callback_data=f"del_{u}")] for u in ALLOWED_USERS]
-        btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")])
-        await q.message.edit_text("📋 <b>GESTIÓN DE ACCESOS VIP</b>", reply_markup=InlineKeyboardMarkup(btns))
+        if not ALLOWED_USERS: return await q.answer("No hay usuarios autorizados.", show_alert=True)
+        
+        await q.answer("Cargando nombres...")
+        btns = []
+        for uid in ALLOWED_USERS:
+            try:
+                # Intentamos obtener el nombre del usuario
+                user = await c.get_users(uid)
+                name = user.first_name
+            except:
+                name = f"ID: {uid}"
+            
+            btns.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"del_{uid}")])
+        
+        btns.append([InlineKeyboardButton("🔙 VOLVER AL MENÚ", callback_data="ui_home")])
+        await q.message.edit_text("📋 <b>USUARIOS CON ACCESO</b>\n<i>Toca para eliminar:</i>", reply_markup=InlineKeyboardMarkup(btns))
 
     elif data.startswith("del_"):
         uid = int(data.split("_")[1])
-        if uid in ALLOWED_USERS: ALLOWED_USERS.remove(uid); save_config()
+        if uid in ALLOWED_USERS: 
+            ALLOWED_USERS.remove(uid)
+            save_config()
+            await q.answer("Usuario eliminado")
+        
+        # Refrescar lista o volver si queda vacía
         if ALLOWED_USERS:
-            btns = [[InlineKeyboardButton(f"🗑 ID: {u}", callback_data=f"del_{u}")] for u in ALLOWED_USERS]
-            btns.append([InlineKeyboardButton("🔙 VOLVER", callback_data="ui_home")])
-            await q.message.edit_reply_markup(InlineKeyboardMarkup(btns))
+            await controller_callbacks(c, q) # Reutilizamos la lógica de lista
         else:
             await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
 
@@ -205,7 +225,6 @@ async def controller_callbacks(c, q):
 async def admin_input_listener(c, m):
     global WAITING_FOR_ID, ALLOWED_USERS, PANEL_MSG_ID
     
-    # 1. Si recibimos un ID mientras esperamos
     if WAITING_FOR_ID and m.text and not m.text.startswith("/"):
         try:
             target_id = int("".join(filter(str.isdigit, m.text)))
@@ -214,18 +233,17 @@ async def admin_input_listener(c, m):
                 save_config()
             WAITING_FOR_ID = False
             
-            # BORRAMOS tu mensaje (el número) para que no ensucie
-            await m.delete()
+            await m.delete() # Borra el número enviado
             
-            # EDITAMOS el panel existente para volver al menú principal
             if PANEL_MSG_ID:
+                # Al agregar con éxito, vuelve al panel principal automáticamente
                 await c.edit_message_text(m.chat.id, PANEL_MSG_ID, get_panel_text(), reply_markup=get_panel_menu())
-                return # Finalizamos aquí para evitar enviar otro mensaje
+                return 
         except: pass
 
-    # 2. Si es /start o cualquier otra cosa, limpieza total y envío de UN SOLO panel
+    # Limpieza total para /start o entradas no válidas
     try:
-        async for message in c.get_chat_history(m.chat.id, limit=50):
+        async for message in c.get_chat_history(m.chat.id, limit=30):
             await message.delete()
     except: pass
     
