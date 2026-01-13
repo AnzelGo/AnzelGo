@@ -97,7 +97,7 @@ async def check_permissions(client, update):
     return True
 
 # ==========================================
-# 🎮 CONTROLADOR (BOT 4) - DISEÑO PROFESIONAL
+# 🎮 CONTROLADOR (BOT 4) - LIMPIEZA QUIRÚRGICA
 # ==========================================
 
 def get_panel_menu():
@@ -127,15 +127,14 @@ def get_panel_text():
         f"<i>Seleccione el modo de operación:</i>"
     )
 
-async def clean_chat_completely(c, chat_id):
-    """Borra absolutamente todos los mensajes recientes para dejar el chat limpio."""
+async def refresh_clean_panel(c, chat_id):
+    """Borra todo rastro de mensajes anteriores y envía el panel fresco."""
     try:
-        message_ids = []
-        async for message in c.get_chat_history(chat_id, limit=30):
-            message_ids.append(message.id)
-        if message_ids:
-            await c.delete_messages(chat_id, message_ids)
+        async for message in c.get_chat_history(chat_id, limit=20):
+            try: await message.delete()
+            except: pass
     except: pass
+    await c.send_message(chat_id, get_panel_text(), reply_markup=get_panel_menu())
 
 @app4.on_callback_query(filters.user(ADMIN_ID))
 async def controller_callbacks(c, q):
@@ -147,11 +146,14 @@ async def controller_callbacks(c, q):
         if SYSTEM_MODE != new_mode:
             SYSTEM_MODE = new_mode
             save_config()
+            # Aquí editamos el panel existente (no borramos) para que sea instantáneo
             await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
-        else: await q.answer(f"Modo {new_mode} ya activo.")
+        else:
+            await q.answer(f"Modo {new_mode} ya activo.")
 
     elif data == "ui_add":
         WAITING_FOR_ID = True
+        # Editamos el panel para pedir el ID
         await q.message.edit_text("✍️ <b>INGRESE ID</b>\n\nEnvíe el número para autorizar:", 
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 CANCELAR", callback_data="ui_home")]]))
     
@@ -174,37 +176,31 @@ async def controller_callbacks(c, q):
             save_config()
             await q.answer("Eliminado")
             if ALLOWED_USERS:
-                # Recargar la lista automáticamente
-                return await controller_callbacks(c, q)
+                return await controller_callbacks(c, q) # Recargar lista
         await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
 
     elif data == "ui_home":
         WAITING_FOR_ID = False
         await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
 
-@app4.on_message(filters.user(ADMIN_ID) & filters.private & ~filters.command("start"))
+@app4.on_message(filters.user(ADMIN_ID) & filters.private)
 async def admin_input_listener(c, m):
     global WAITING_FOR_ID, ALLOWED_USERS
-    if WAITING_FOR_ID and m.text:
+    
+    # 1. Si estamos esperando un ID y llega texto
+    if WAITING_FOR_ID and m.text and not m.text.startswith("/"):
         try:
             target_id = int("".join(filter(str.isdigit, m.text)))
             if target_id not in ALLOWED_USERS:
                 ALLOWED_USERS.append(target_id)
                 save_config()
             WAITING_FOR_ID = False
-            # Limpieza total antes de mostrar el panel nuevo
-            await clean_chat_completely(c, m.chat.id)
-            await c.send_message(m.chat.id, get_panel_text(), reply_markup=get_panel_menu())
         except:
-            await m.delete()
+            pass
+    
+    # 2. SIEMPRE que el Admin escriba algo (sea ID o /start), borramos todo y ponemos el panel solo una vez
+    await refresh_clean_panel(c, m.chat.id)
 
-@app4.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_handler(c, m):
-    global WAITING_FOR_ID
-    WAITING_FOR_ID = False
-    # Limpieza total al iniciar
-    await clean_chat_completely(c, m.chat.id)
-    await c.send_message(m.chat.id, get_panel_text(), reply_markup=get_panel_menu())
 
 # ==============================================================================
 # LÓGICA DEL BOT 1 (UPLOADER)
