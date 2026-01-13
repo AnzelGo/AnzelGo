@@ -101,7 +101,7 @@ async def check_permissions(client, update):
 
     # 2. 🔴 Modo MANTENIMIENTO (OFF)
     if SYSTEM_MODE == "OFF":
-        msg_off = "⛔ **SISTEMA EN MANTENIMIENTO**\nLos servicios están temporalmente apagados desde el panel central."
+        msg_off = "⛔ **SISTEMA EN MANTENIMIENTO**\nLos bots están temporalmente fuera de servicio por actualizaciones técnicas."
         
         if isinstance(update, CallbackQuery):
             await reply_method("⛔ Mantenimiento activo.", show_alert=True)
@@ -112,7 +112,7 @@ async def check_permissions(client, update):
     # 3. 🔒 Modo PRIVADO (VIP)
     if SYSTEM_MODE == "PRIVATE":
         if user_id not in ALLOWED_USERS:
-            msg_priv = "🔒 **ACCESO RESTRINGIDO**\nEste bot está en modo privado. Solo usuarios en la lista VIP pueden usarlo."
+            msg_priv = "🔒 **ACCESO RESTRINGIDO 🔒**\nEste bot está operando en **Modo Privado** (Prioridad Premium). Actualmente solo usuarios autorizados tienen acceso.."
             btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url="https://t.me/AnzZGTv1")]])
             
             if isinstance(update, CallbackQuery):
