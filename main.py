@@ -796,20 +796,29 @@ async def upload_final_video_c2(client, chat_id):
         return
 
     # 2. Chequeo si existe la ruta en memoria
-    if not user_info.get('final_path'):
+    final_path = user_info.get('final_path')
+    if not final_path:
         return
         
-    final_path = user_info['final_path']
     status_id = user_info.get('status_message_id')
     
-    # 3. VERIFICACIÓN IMPORTANTE: ¿El archivo sigue en el disco?
+    # 3. VERIFICACIÓN: ¿El archivo de video sigue en el disco?
     if not os.path.exists(final_path):
         try:
-            await client.send_message(chat_id, "⚠️ **Tiempo de espera agotado.**\nEl archivo temporal fue eliminado por el servidor debido a la inactividad. Debes procesarlo de nuevo.")
+            await client.send_message(chat_id, "⚠️ **Tiempo de espera agotado.**\nEl archivo temporal fue eliminado. Debes procesarlo de nuevo.")
             if status_id: await client.delete_messages(chat_id, status_id)
         except: pass
         clean_up_c2(chat_id)
         return
+
+    # 4. PREPARACIÓN DE MINIATURA (Corrección del Error NoneType)
+    # Verificamos la miniatura de forma segura
+    thumb_path = user_info.get('thumbnail_path')
+    if thumb_path:
+        if not os.path.exists(thumb_path):
+            thumb_path = None # Si la ruta existe pero el archivo no, anulamos la miniatura
+    else:
+        thumb_path = None # Si no hay ruta, aseguramos que sea None
 
     # Determinar el nombre final del archivo
     if user_info.get('new_name'):
@@ -819,13 +828,13 @@ async def upload_final_video_c2(client, chat_id):
         file_name = os.path.basename(user_info.get('video_file_name', 'video.mp4'))
 
     try:
-        # Recuperar mensaje de estado o crear uno nuevo si se borró
+        # Recuperar mensaje de estado o crear uno nuevo
         try: status_message = await client.get_messages(chat_id, status_id)
         except: status_message = await client.send_message(chat_id, "⬆️ Preparando subida...")
 
         start_time = time.time()
         
-        # Intentar leer metadatos (si falla, ponemos valores en 0 para no romper la subida)
+        # Intentar leer metadatos de forma segura
         try:
             probe = ffmpeg.probe(final_path)
             video_stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), {})
@@ -839,7 +848,7 @@ async def upload_final_video_c2(client, chat_id):
         if user_info.get('send_as_file'):
             await client.send_document(
                 chat_id=chat_id, document=final_path, file_name=file_name,
-                thumb=user_info.get('thumbnail_path') if os.path.exists(user_info.get('thumbnail_path', '')) else None,
+                thumb=thumb_path, # Usamos la variable segura
                 caption=f"📂 <b>Archivo:</b> <code>{file_name}</code>",
                 progress=progress_bar_handler_c2, progress_args=(client, status_message, start_time, "⬆️ Subiendo")
             )
@@ -847,7 +856,7 @@ async def upload_final_video_c2(client, chat_id):
             await client.send_video(
                 chat_id=chat_id, video=final_path, file_name=file_name,
                 caption=f"🎬 <b>Video:</b> <code>{file_name}</code>",
-                thumb=user_info.get('thumbnail_path') if os.path.exists(user_info.get('thumbnail_path', '')) else None,
+                thumb=thumb_path, # Usamos la variable segura
                 duration=duration, width=width, height=height, supports_streaming=True,
                 progress=progress_bar_handler_c2, progress_args=(client, status_message, start_time, "⬆️ Subiendo")
             )
