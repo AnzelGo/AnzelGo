@@ -14,7 +14,7 @@ import psutil
 import re
 import logging
 import ffmpeg
-import GPUtil  # <--- Asegúrate que esté instalado
+import GPUtil 
 from threading import Thread
 from flask import Flask
 
@@ -30,63 +30,49 @@ from yt_dlp import YoutubeDL
 # Aplicar nest_asyncio inmediatamente
 nest_asyncio.apply()
 
-# Configuración desde variables de entorno
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-
-# AGREGAS ESTA LÍNEA para "importar" tu ID desde la configuración de Kaggle
-ADMIN_ID = int(os.getenv("ADMIN_ID")) 
-
-# Inicialización de las 4 apps con más hilos de trabajo
-app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"), workers=20)
-app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"), workers=20)
-app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"), workers=20)
-app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"), workers=5)
-
-
 # ==========================================
-# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL CORREGIDO
+# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL (CORREGIDO)
 # ==========================================
 
-# 1. Carga de variables con seguridad (evita errores int(None))
-API_ID = int(os.getenv("API_ID") or 0)
-API_HASH = os.getenv("API_HASH") or ""
-ADMIN_ID = int(os.getenv("ADMIN_ID") or 0)
+# 1. Carga segura de variables de entorno
+# Usamos .get() y valores por defecto para que el bot no "muera" si falta un dato
+API_ID = int(os.environ.get("API_ID", 0))
+API_HASH = os.environ.get("API_HASH", "")
+ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
 
-# 2. Inicialización de Apps
-app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"), workers=20)
-app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"), workers=20)
-app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"), workers=20)
-app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"), workers=5)
+BOT1_TOKEN = os.environ.get("BOT1_TOKEN", "")
+BOT2_TOKEN = os.environ.get("BOT2_TOKEN", "")
+BOT3_TOKEN = os.environ.get("BOT3_TOKEN", "")
+BOT4_TOKEN = os.environ.get("BOT4_TOKEN", "")
 
-CONFIG_FILE = "/kaggle/working/system_config.json" # Ruta absoluta para Kaggle
+# 2. Inicialización UNIFICADA de las 4 apps
+# Solo se definen una vez aquí.
+app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN, workers=20)
+app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_TOKEN, workers=20)
+app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN, workers=20)
+app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN, workers=5)
+
+CONFIG_FILE = "/kaggle/working/system_config.json"
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
-                # Si el archivo está vacío o mal formado, usamos valores seguros
                 return data.get("mode", "OFF"), data.get("allowed", [])
-        except Exception as e:
-            print(f"Error cargando config: {e}")
-            return "OFF", []
+        except: return "OFF", []
     return "OFF", []
-
-# Inicializamos las variables globales cargando el archivo
-SYSTEM_MODE, ALLOWED_USERS = load_config()
 
 def save_config():
     try:
         data = {"mode": SYSTEM_MODE, "allowed": ALLOWED_USERS}
         with open(CONFIG_FILE, "w") as f:
             json.dump(data, f, indent=4)
-    except Exception as e:
-        print(f"Error guardando config: {e}")
+    except: pass
 
-# Variables de control de interfaz
+# Inicialización de variables de estado
+SYSTEM_MODE, ALLOWED_USERS = load_config()
 WAITING_FOR_ID = False
-VIEWING_LIST = False
 PANEL_MSG_ID = None
 
 # Definición de clientes (Asumo que ya los tienes iniciados como en tu ejemplo)
