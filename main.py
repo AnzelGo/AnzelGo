@@ -1093,7 +1093,7 @@ async def download_logic_c3(c, q):
         if path and os.path.exists(path): os.remove(path)
 
 # ==========================================
-# EJECUCIÓN (MAIN) - CORREGIDO
+# EJECUCIÓN (MAIN) - VERSIÓN FINAL CORREGIDA
 # ==========================================
 
 async def main():
@@ -1124,22 +1124,17 @@ async def main():
     except Exception as e:
         print(f"⚠️ Error al obtener info de los bots: {e}")
 
-    # Mantenemos vivo el loop para que no se cierre
-    print("🔔 Bots en línea. Presiona Ctrl+C para detener.")
+    # Mantenemos vivo el loop
+    print("🔔 Bots en línea y operando desde la nube de Kaggle.")
     await idle()
     
-    # Al detenerse, cerramos sesión limpiamente
-    await app1.stop()
-    await app2.stop()
-    await app3.stop()
-    await app4.stop()
+    # Al detenerse
+    await app1.stop(); await app2.stop(); await app3.stop(); await app4.stop()
 
 if __name__ == "__main__":
     try:
-        # Usamos el loop de asyncio para ejecutar la función principal
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(main())
+        asyncio.get_event_loop().run_until_complete(main())
     except KeyboardInterrupt:
-        print("\n🛑 Sistema detenido por el usuario.")
+        print("\n🛑 Detenido por el usuario.")
     except Exception as e:
-        print(f"❌ ERROR CRÍTICO AL ARRANCAR: {e}")
+        print(f"❌ Error crítico: {e}")
