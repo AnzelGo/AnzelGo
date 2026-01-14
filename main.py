@@ -14,6 +14,7 @@ import psutil
 import re
 import logging
 import ffmpeg
+import GPUtil  # <--- Asegúrate que esté instalado
 from threading import Thread
 from flask import Flask
 
@@ -26,7 +27,7 @@ from pyrogram.types import (
 from pyrogram.errors import MessageNotModified, FloodWait
 from yt_dlp import YoutubeDL
 
-# Aplicar nest_asyncio para permitir bucles anidados
+# Aplicar nest_asyncio inmediatamente
 nest_asyncio.apply()
 
 # Configuración desde variables de entorno
@@ -43,30 +44,47 @@ app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT
 app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"), workers=5)
 
 
-
 # ==========================================
-# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL (ESTILO REFERENCIA)
+# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL CORREGIDO
 # ==========================================
 
-CONFIG_FILE = "system_config.json"
-ADMIN_ID = int(os.getenv("ADMIN_ID", "12345678")) # Asegúrate que esto cargue tu ID real
+# 1. Carga de variables con seguridad (evita errores int(None))
+API_ID = int(os.getenv("API_ID") or 0)
+API_HASH = os.getenv("API_HASH") or ""
+ADMIN_ID = int(os.getenv("ADMIN_ID") or 0)
+
+# 2. Inicialización de Apps
+app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"), workers=20)
+app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"), workers=20)
+app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"), workers=20)
+app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"), workers=5)
+
+CONFIG_FILE = "/kaggle/working/system_config.json" # Ruta absoluta para Kaggle
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
                 data = json.load(f)
+                # Si el archivo está vacío o mal formado, usamos valores seguros
                 return data.get("mode", "OFF"), data.get("allowed", [])
-        except: return "OFF", []
+        except Exception as e:
+            print(f"Error cargando config: {e}")
+            return "OFF", []
     return "OFF", []
 
-def save_config():
-    data = {"mode": SYSTEM_MODE, "allowed": ALLOWED_USERS}
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f)
+# Inicializamos las variables globales cargando el archivo
+SYSTEM_MODE, ALLOWED_USERS = load_config()
 
-# --- VARIABLES GLOBALES (Igual que tu código funcional) ---
-SYSTEM_MODE, ALLOWED_USERS = load_config() # Modos: "ON", "OFF", "PRIVATE"
+def save_config():
+    try:
+        data = {"mode": SYSTEM_MODE, "allowed": ALLOWED_USERS}
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"Error guardando config: {e}")
+
+# Variables de control de interfaz
 WAITING_FOR_ID = False
 VIEWING_LIST = False
 PANEL_MSG_ID = None
