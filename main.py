@@ -109,16 +109,27 @@ async def check_permissions(client, update):
             await reply_method(msg_off, quote=True)
         return False
 
-    # 3. 🔒 Modo PRIVADO (VIP)
+        # 3. 🔒 Modo PRIVADO (VIP)
     if SYSTEM_MODE == "PRIVATE":
         if user_id not in ALLOWED_USERS:
-            msg_priv = "🔒 **ACCESO RESTRINGIDO 🔒**\nEste bot está operando en **Modo Privado** (Prioridad Premium). Actualmente solo usuarios autorizados tienen acceso.."
-            btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url="https://t.me/AnzZGTv1")]])
+            # Texto que el usuario te enviará (ya incluye su ID)
+            texto_solicitud = f"Hola, solicito acceso al bot. Mi ID es: {user_id}"
+            import urllib.parse
+            encoded_text = urllib.parse.quote(texto_solicitud)
+            link_soporte = f"https://t.me/AnzZGTv1?text={encoded_text}"
+            
+            # Mensaje que ve el usuario en el bot (ID clickeable para copiar)
+            msg_priv = (
+                "🔒 **ACCESO RESTRINGIDO**\n\n"
+                "Este bot está operando en **Modo Privado**.\n"
+                "Actualmente solo usuarios autorizados tienen acceso.\n\n"
+                f"Tu ID: <code>{user_id}</code> (Toca para copiar)"
+            )
+            btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url=link_soporte)]])
             
             if isinstance(update, CallbackQuery):
-                await reply_method("🔒 Acceso Denegado (VIP)", show_alert=True)
+                await reply_method(f"🔒 Acceso VIP requerido. ID: {user_id}", show_alert=True)
             elif chat_type == "private":
-                # Si es mensaje, respondemos con botón
                 if isinstance(update, Message):
                     await update.reply_text(msg_priv, reply_markup=btn, quote=True)
                 else:
