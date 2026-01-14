@@ -1,5 +1,5 @@
 # ==========================================
-# PRU3BA IMPORTACIONES GLOBALES
+# DEFINITIVO IMPORTACIONES GLOBALES
 # ==========================================
 import os
 import asyncio
@@ -36,11 +36,12 @@ API_HASH = os.getenv("API_HASH")
 # AGREGAS ESTA LÍNEA para "importar" tu ID desde la configuración de Kaggle
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
 
-# Inicialización de las 4 apps
-app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"))
-app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"))
-app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"))
-app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"))
+# Inicialización de las 4 apps con más hilos de trabajo
+app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"), workers=20)
+app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"), workers=20)
+app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"), workers=20)
+app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"), workers=5)
+
 
 
 # ==========================================
@@ -431,6 +432,19 @@ def is_gpu_available_c2():
     except:
         return False
 
+def get_best_gpu_c2():
+    """Selecciona la GPU T4 con menos carga actual para balancear el trabajo"""
+    try:
+        import GPUtil
+        gpus = GPUtil.getGPUs()
+        if not gpus or len(gpus) < 2: 
+            return "0"
+        # Ordenar las GPUs por menor uso de memoria actual
+        best_gpu = sorted(gpus, key=lambda x: x.memoryUsed)[0]
+        return str(best_gpu.id)
+    except:
+        return "0"
+
 def format_size_c2(size_bytes):
     if size_bytes is None: return "0 B"
     if size_bytes < 1024: return f"{size_bytes} Bytes"
@@ -509,34 +523,39 @@ async def download_video_c2(client, chat_id, status_message):
 async def run_compression_flow_c2(client, chat_id, status_message):
     downloaded_path = None
     try:
+        # La descarga ahora es llamada de forma asíncrona
         downloaded_path = await download_video_c2(client, chat_id, status_message)
         if not downloaded_path: return
 
         user_info = user_data_c2[chat_id]
         user_info['state'] = 'compressing'
         opts = user_info['compression_options']
-        output_path = os.path.join(DOWNLOAD_DIR_C2, f"compressed_{chat_id}.mp4")
+        # Usamos UUID para que si dos personas comprimen a la vez, los archivos no choquen
+        output_path = os.path.join(DOWNLOAD_DIR_C2, f"comp_{uuid.uuid4().hex[:5]}_{chat_id}.mp4")
 
         probe = ffmpeg.probe(downloaded_path)
         duration = float(probe.get('format', {}).get('duration', 0))
         original_size = os.path.getsize(downloaded_path)
 
         if is_gpu_available_c2():
-            await update_message_c2(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (GPU)...")
+            selected_gpu = get_best_gpu_c2() # <--- Selecciona T4 (0 o 1)
+            await update_message_c2(client, chat_id, status_message.id, f"🗜️ COMPRIMIENDO (GPU {selected_gpu})...")
+            
             preset_map = {'ultrafast': 'p1', 'veryfast': 'p2', 'fast': 'p3', 'medium': 'p4', 'slow': 'p6'}
             gpu_preset = preset_map.get(opts['preset'], 'p4')
+            
             cmd = [
-                'ffmpeg', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda',
-                '-i', downloaded_path,
+                'ffmpeg', '-hwaccel', 'cuda', '-hwaccel_device', selected_gpu,
+                '-hwaccel_output_format', 'cuda', '-i', downloaded_path,
                 '-vf', f"scale_cuda=-2:{opts['resolution']}",
                 '-c:v', 'h264_nvenc', '-preset', gpu_preset,
                 '-rc', 'vbr', '-cq', opts['crf'], '-b:v', '0',
                 '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart',
                 '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
-            engine_text = "GPU T4"
+            engine_text = f"GPU T4 (Slot {selected_gpu})"
         else:
-            await update_message_c2(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO...")
+            await update_message_c2(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (CPU)...")
             cmd = [
                 'ffmpeg', '-i', downloaded_path,
                 '-vf', f"scale=-2:{opts['resolution']}",
@@ -544,18 +563,26 @@ async def run_compression_flow_c2(client, chat_id, status_message):
                 '-vcodec', 'libx264', '-acodec', 'aac', '-b:a', '64k',
                 '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
-            engine_text = "Estándar"
+            engine_text = "CPU Estándar"
 
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         success = await track_ffmpeg_progress_c2(client, chat_id, status_message.id, process, duration, original_size, output_path)
 
-        if not success:
-            await update_message_c2(client, chat_id, status_message.id, "❌ Error de compresión.")
-            return
+        if success:
+            user_info['final_path'] = output_path
+            compressed_size = os.path.getsize(output_path)
+            reduction = ((original_size - compressed_size) / original_size) * 100
+            summary = (f"✅ **Compresión Finalizada ({engine_text})**\n\n"
+                       f"**Reducción:** `{reduction:.1f}%` | **Tamaño:** `{format_size_c2(compressed_size)}` \n"
+                       f"¿Cómo procedemos?")
+            await show_conversion_options_c2(client, chat_id, status_message.id, text=summary)
+    except Exception as e:
+        await client.send_message(chat_id, f"❌ Error en flujo: {e}")
+    finally:
+        if downloaded_path and os.path.exists(downloaded_path): 
+            try: os.remove(downloaded_path)
+            except: pass
 
-        user_info['final_path'] = output_path
-        compressed_size = os.path.getsize(output_path)
-        reduction = ((original_size - compressed_size) / original_size) * 100 if original_size > 0 else 0
         
         title = f"✅ **Compresión Exitosa ({engine_text})**" if is_gpu_available_c2() else "✅ **Compresión Exitosa**"
         summary = (f"{title}\n\n"
@@ -707,52 +734,73 @@ async def callback_handler_c2(client, cb: CallbackQuery):
     if not user_info:
         await cb.answer("Esta operación ha expirado.", show_alert=True)
         return
+    
     action = cb.data
     user_info['status_message_id'] = cb.message.id
     await cb.answer()
 
+    # --- LÓGICA DE CANCELACIÓN ---
     if action == "cancel":
         user_info['state'] = 'cancelled'
-        await cb.message.edit("Operación cancelada.")
+        await cb.message.edit("🛑 Operación cancelada.")
         clean_up_c2(chat_id)
+
+    # --- FLUJO DE COMPRESIÓN ---
     elif action == "action_compress":
         is_gpu = is_gpu_available_c2()
         user_info['compression_options'] = {'crf': '24' if is_gpu else '22', 'resolution': '360', 'preset': 'veryfast'}
         await show_compression_options_c2(client, chat_id, cb.message.id)
+
     elif action == "compressopt_default":
-        await cb.message.edit(f"Iniciando compresión {'GPU' if is_gpu_available_c2() else ''}...")
-        await run_compression_flow_c2(client, chat_id, cb.message)
+        # USAMOS create_task para que la compresión corra sola y el bot quede libre
+        asyncio.create_task(run_compression_flow_c2(client, chat_id, cb.message))
+
     elif action == "compressopt_advanced":
         await show_advanced_menu_c2(client, chat_id, cb.message.id, "crf")
+
     elif action.startswith("adv_"):
         part, value = action.split("_")[1], action.split("_")[2]
         user_info.setdefault('compression_options', {})[part] = value
         next_step = {"crf": "resolution", "resolution": "preset", "preset": "confirm"}.get(part)
-        if next_step: await show_advanced_menu_c2(client, chat_id, cb.message.id, next_step, user_info['compression_options'])
+        if next_step: 
+            await show_advanced_menu_c2(client, chat_id, cb.message.id, next_step, user_info['compression_options'])
+
     elif action == "start_advanced_compression":
-        await cb.message.edit(f"Opciones guardadas. Iniciando compresión {'GPU' if is_gpu_available_c2() else ''}...")
-        await run_compression_flow_c2(client, chat_id, cb.message)
+        await cb.message.edit(f"⚙️ Aplicando configuración avanzada...")
+        asyncio.create_task(run_compression_flow_c2(client, chat_id, cb.message))
+
+    # --- FLUJO DE SOLO CONVERTIR / ENVIAR ---
     elif action == "action_convert_only":
-        await cb.message.edit("Iniciando descarga...")
-        if await download_video_c2(client, chat_id, cb.message):
-            await show_conversion_options_c2(client, chat_id, cb.message.id, text="Descarga completa. ¿Cómo quieres continuar?")
+        await cb.message.edit("📥 Iniciando descarga rápida...")
+        # Creamos una tarea interna para no frenar al bot
+        async def dl_task():
+            path = await download_video_c2(client, chat_id, cb.message)
+            if path:
+                await show_conversion_options_c2(client, chat_id, cb.message.id, text="✅ Descarga completa.")
+        asyncio.create_task(dl_task())
+
     elif action == "convertopt_withthumb":
         user_info['state'] = 'waiting_for_thumbnail'
-        await cb.message.edit("Por favor, envía la imagen para la miniatura.")
+        await cb.message.edit("🖼️ Por favor, envía la imagen que quieres como miniatura.")
+
     elif action == "convertopt_nothumb":
         user_info['thumbnail_path'] = None
         await show_rename_options_c2(client, chat_id, cb.message.id)
+
     elif action == "convertopt_asfile":
         user_info['send_as_file'] = True
         await show_rename_options_c2(client, chat_id, cb.message.id)
+
+    # --- LÓGICA DE RENOMBRADO ---
     elif action == "renameopt_yes":
         user_info['state'] = 'waiting_for_new_name'
-        await cb.message.edit("Ok, envíame el nuevo nombre (sin extensión).")
+        await cb.message.edit("✏️ Envíame el nuevo nombre para el archivo (sin extensión).")
+
     elif action == "renameopt_no":
         user_info['new_name'] = None
         user_info['state'] = 'uploading'
-        await cb.message.edit("Entendido. Preparando para subir...")
-        await upload_final_video_c2(client, chat_id)
+        await cb.message.edit("🚀 Preparando subida directa...")
+        asyncio.create_task(upload_final_video_c2(client, chat_id))
 
 @app2.on_message(filters.photo & filters.private)
 async def thumbnail_handler_c2(client, message: Message):
