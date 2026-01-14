@@ -346,6 +346,11 @@ async def set_server_via_btn_c1(_, m):
 
 @app1.on_message(filters.media)
 async def handle_media_c1(c, m):
+    # --- VERIFICACIÓN DE PERMISOS (NUEVO) ---
+    if not await check_permissions(c, m): 
+        return
+    # ----------------------------------------
+
     user_id = m.from_user.id
     if user_id not in user_preference_c1:
         await m.reply_text("⚠️ <b>Error:</b> Seleccione un servidor primero.", reply_markup=get_fixed_menu_c1(), quote=True); return
@@ -370,6 +375,7 @@ async def handle_media_c1(c, m):
     except Exception as e: await status.edit_text(f"⚠️ Fallo: {str(e)}")
     finally:
         if path and os.path.exists(path): os.remove(path)
+
 
 @app1.on_callback_query(filters.regex("close_all"))
 async def close_callback_c1(c, q):
@@ -667,6 +673,11 @@ async def start_command_c2(client, message):
 
 @app2.on_message(filters.video & filters.private)
 async def video_handler_c2(client, message: Message):
+    # --- VERIFICACIÓN DE PERMISOS (NUEVO) ---
+    if not await check_permissions(client, message): 
+        return
+    # ----------------------------------------
+
     chat_id = message.chat.id
     if user_data_c2.get(chat_id): clean_up_c2(chat_id)
     if message.video.file_size > MAX_VIDEO_SIZE_MB_C2 * 1024 * 1024:
@@ -675,6 +686,7 @@ async def video_handler_c2(client, message: Message):
     user_data_c2[chat_id] = {'state': 'awaiting_action', 'original_message_id': message.id, 'video_file_name': message.video.file_name or f"video_{message.id}.mp4", 'last_update_time': 0}
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🗜️ Comprimir Video", callback_data="action_compress")], [InlineKeyboardButton("⚙️ Solo Enviar/Convertir", callback_data="action_convert_only")], [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]])
     await message.reply_text("Video recibido. ¿Qué quieres hacer?", reply_markup=keyboard, quote=True)
+
 
 @app2.on_callback_query()
 async def callback_handler_c2(client, cb: CallbackQuery):
@@ -777,64 +789,78 @@ async def rename_handler_c2(client, message: Message):
 # --- AJUSTE EN LA FUNCIÓN DE SUBIDA PARA RECONOCER EL NOMBRE ---
 async def upload_final_video_c2(client, chat_id):
     user_info = user_data_c2.get(chat_id)
-    if not user_info or not user_info.get('final_path'):
+    
+    # 1. Chequeo de seguridad por si se reinició el bot
+    if not user_info:
+        await client.send_message(chat_id, "❌ **La sesión ha expirado.**\nPor favor envía el video nuevamente.")
+        return
+
+    # 2. Chequeo si existe la ruta en memoria
+    if not user_info.get('final_path'):
         return
         
     final_path = user_info['final_path']
-    status_id = user_info['status_message_id']
+    status_id = user_info.get('status_message_id')
     
+    # 3. VERIFICACIÓN IMPORTANTE: ¿El archivo sigue en el disco?
+    if not os.path.exists(final_path):
+        try:
+            await client.send_message(chat_id, "⚠️ **Tiempo de espera agotado.**\nEl archivo temporal fue eliminado por el servidor debido a la inactividad. Debes procesarlo de nuevo.")
+            if status_id: await client.delete_messages(chat_id, status_id)
+        except: pass
+        clean_up_c2(chat_id)
+        return
+
     # Determinar el nombre final del archivo
     if user_info.get('new_name'):
-        # Si el usuario no puso .mp4, se lo ponemos nosotros
         ext = os.path.splitext(final_path)[1] or ".mp4"
         file_name = user_info['new_name'] if user_info['new_name'].endswith(ext) else user_info['new_name'] + ext
     else:
         file_name = os.path.basename(user_info.get('video_file_name', 'video.mp4'))
 
     try:
-        status_message = await client.get_messages(chat_id, status_id)
+        # Recuperar mensaje de estado o crear uno nuevo si se borró
+        try: status_message = await client.get_messages(chat_id, status_id)
+        except: status_message = await client.send_message(chat_id, "⬆️ Preparando subida...")
+
         start_time = time.time()
         
-        # Parámetros de video (metadata)
-        probe = ffmpeg.probe(final_path)
-        video_stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), {})
-        duration = int(float(video_stream.get('duration', 0)))
-        width = int(video_stream.get('width', 0))
-        height = int(video_stream.get('height', 0))
+        # Intentar leer metadatos (si falla, ponemos valores en 0 para no romper la subida)
+        try:
+            probe = ffmpeg.probe(final_path)
+            video_stream = next((s for s in probe['streams'] if s['codec_type'] == 'video'), {})
+            duration = int(float(video_stream.get('duration', 0)))
+            width = int(video_stream.get('width', 0))
+            height = int(video_stream.get('height', 0))
+        except:
+            duration, width, height = 0, 0, 0
 
         # SUBIDA REAL
         if user_info.get('send_as_file'):
             await client.send_document(
-                chat_id=chat_id,
-                document=final_path,
-                file_name=file_name,
-                thumb=user_info.get('thumbnail_path'),
+                chat_id=chat_id, document=final_path, file_name=file_name,
+                thumb=user_info.get('thumbnail_path') if os.path.exists(user_info.get('thumbnail_path', '')) else None,
                 caption=f"📂 <b>Archivo:</b> <code>{file_name}</code>",
-                progress=progress_bar_handler_c2,
-                progress_args=(client, status_message, start_time, "⬆️ Subiendo")
+                progress=progress_bar_handler_c2, progress_args=(client, status_message, start_time, "⬆️ Subiendo")
             )
         else:
             await client.send_video(
-                chat_id=chat_id,
-                video=final_path,
-                file_name=file_name,
+                chat_id=chat_id, video=final_path, file_name=file_name,
                 caption=f"🎬 <b>Video:</b> <code>{file_name}</code>",
-                thumb=user_info.get('thumbnail_path'),
-                duration=duration,
-                width=width,
-                height=height,
-                supports_streaming=True,
-                progress=progress_bar_handler_c2,
-                progress_args=(client, status_message, start_time, "⬆️ Subiendo")
+                thumb=user_info.get('thumbnail_path') if os.path.exists(user_info.get('thumbnail_path', '')) else None,
+                duration=duration, width=width, height=height, supports_streaming=True,
+                progress=progress_bar_handler_c2, progress_args=(client, status_message, start_time, "⬆️ Subiendo")
             )
         
-        await status_message.delete()
+        try: await status_message.delete()
+        except: pass
         await client.send_message(chat_id, "✅ <b>Proceso Finalizado con éxito.</b>")
         
     except Exception as e:
         await client.send_message(chat_id, f"❌ <b>Error en subida:</b>\n<code>{str(e)}</code>")
     finally:
         clean_up_c2(chat_id)
+
 
 # --- Menús Diferenciados Bot 2 ---
 async def show_compression_options_c2(client, chat_id, msg_id):
@@ -949,6 +975,11 @@ async def start_and_clean_c3(c, m):
 
 @app3.on_message(filters.text)
 async def handle_text_c3(c, m):
+    # --- VERIFICACIÓN DE PERMISOS (NUEVO) ---
+    if not await check_permissions(c, m): 
+        return
+    # ----------------------------------------
+
     save_msg_c3(m.chat.id, m.id)
     if m.text.startswith("http"):
         status = await m.reply_text("🔎 Analizando..."); save_msg_c3(m.chat.id, status.id)
@@ -963,6 +994,7 @@ async def handle_text_c3(c, m):
             title = video.get('title', 'Video'); buttons.append([InlineKeyboardButton(f"🎥 {title[:45]}...", callback_data=f"opts|{link_id}")])
         await status.edit_text("✅ Elige un video:", reply_markup=InlineKeyboardMarkup(buttons))
     except Exception as e: await status.edit_text(f"❌ Error: {str(e)[:50]}")
+
 
 async def show_options_c3(url, status_msg):
     link_id = str(uuid.uuid4())[:8]; url_storage_c3[link_id] = url
