@@ -1093,14 +1093,17 @@ async def download_logic_c3(c, q):
         if path and os.path.exists(path): os.remove(path)
 
 # ==========================================
-# EJECUCIÓN (MAIN)
+# EJECUCIÓN (MAIN) - CORREGIDO
 # ==========================================
 
 async def main():
     print("🚀 SISTEMA INICIADO...")
     
     # Iniciamos el servidor Flask en otro hilo
-    Thread(target=run_flask_server).start()
+    try:
+        Thread(target=run_flask_server, daemon=True).start()
+    except Exception as e:
+        print(f"⚠️ Error al iniciar Flask: {e}")
 
     # Iniciamos los 4 bots
     await app1.start()
@@ -1108,22 +1111,35 @@ async def main():
     await app3.start()
     await app4.start()
     
-    me1 = await app1.get_me()
-    me2 = await app2.get_me()
-    me3 = await app3.get_me()
-    me4 = await app4.get_me()
+    try:
+        me1 = await app1.get_me()
+        me2 = await app2.get_me()
+        me3 = await app3.get_me()
+        me4 = await app4.get_me()
 
-    print(f"✅ Bot Uploader: @{me1.username}")
-    print(f"✅ Bot AnzelGo (Integrado): @{me2.username}")
-    print(f"✅ Bot Descargas: @{me3.username}")
-    print(f"✅ Master Controller: @{me4.username}")
+        print(f"✅ Bot Uploader: @{me1.username}")
+        print(f"✅ Bot AnzelGo (Integrado): @{me2.username}")
+        print(f"✅ Bot Descargas: @{me3.username}")
+        print(f"✅ Master Controller: @{me4.username}")
+    except Exception as e:
+        print(f"⚠️ Error al obtener info de los bots: {e}")
 
-    # Mantenemos vivo el loop
+    # Mantenemos vivo el loop para que no se cierre
+    print("🔔 Bots en línea. Presiona Ctrl+C para detener.")
     await idle()
     
-    # Al detenerse
-    await app1.stop(); await app2.stop(); await app3.stop(); await app4.stop()
+    # Al detenerse, cerramos sesión limpiamente
+    await app1.stop()
+    await app2.stop()
+    await app3.stop()
+    await app4.stop()
 
 if __name__ == "__main__":
-    try: asyncio.get_event_loop().run_until_complete(main())
-    except KeyboardInterrupt: pass
+    try:
+        # Usamos el loop de asyncio para ejecutar la función principal
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Sistema detenido por el usuario.")
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO AL ARRANCAR: {e}")
