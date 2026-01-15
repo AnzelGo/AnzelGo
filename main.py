@@ -1129,10 +1129,14 @@ async def main():
     await idle()
     
     # Al detenerse
-    await app1.stop(); await app2.stop(); await app3.stop(); await app4.stop()
+    await app1.stop()
+    await app2.stop()
+    await app3.stop()
+    await app4.stop()
 
 if __name__ == "__main__":
     try:
+        # Ejecución del loop principal
         asyncio.get_event_loop().run_until_complete(main())
     except KeyboardInterrupt:
         print("\n🛑 Detenido por el usuario.")
