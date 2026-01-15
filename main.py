@@ -33,10 +33,10 @@ nest_asyncio.apply()
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 
-# AGREGAS ESTA LÍNEA para "importar" tu ID desde la configuración de Kaggle
+# ID desde configuración
 ADMIN_ID = int(os.getenv("ADMIN_ID")) 
 
-# Inicialización de las 4 apps con Workers aumentados para evitar bloqueos
+# Inicialización de las 4 apps con capacidad multihilo aumentada (workers=100)
 app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"), workers=100)
 app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"), workers=100)
 app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"), workers=100)
@@ -44,7 +44,7 @@ app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT
 
 
 # ==========================================
-# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL (ESTILO REFERENCIA)
+# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL
 # ==========================================
 
 CONFIG_FILE = "system_config.json"
@@ -64,7 +64,6 @@ def save_config():
     with open(CONFIG_FILE, "w") as f:
         json.dump(data, f)
 
-# --- VARIABLES GLOBALES ---
 SYSTEM_MODE, ALLOWED_USERS = load_config()
 WAITING_FOR_ID = False
 VIEWING_LIST = False
@@ -99,15 +98,12 @@ async def check_permissions(client, update):
             import urllib.parse
             encoded_text = urllib.parse.quote(texto_solicitud)
             link_soporte = f"https://t.me/AnzZGTv1?text={encoded_text}"
-            msg_priv = (
-                "🔒 **ACCESO RESTRINGIDO** 🔒\n\n"
-                "Este bot está operando en **Modo Privado**.\n"
-                "(Prioridad Premium). Actualmente solo usuarios autorizados tienen acceso."
-            )
+            msg_priv = ("🔒 **ACCESO RESTRINGIDO** 🔒\n\nEste bot está operando en **Modo Privado**.\n(Prioridad Premium). Actualmente solo usuarios autorizados tienen acceso.")
             btn = InlineKeyboardMarkup([[InlineKeyboardButton("💎 Solicitar Acceso", url=link_soporte)]])
             if isinstance(update, CallbackQuery): await reply_method("🔒 Acceso Denegado (Modo VIP)", show_alert=True)
             elif chat_type == "private": await update.reply_text(msg_priv, reply_markup=btn, quote=True)
             return False
+
     return True
 
 # ==========================================
@@ -148,18 +144,12 @@ async def controller_callbacks(c, q):
         await q.message.edit_text("✍️ <b>INGRESE ID DEL USUARIO</b>", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 CANCELAR", callback_data="ui_home")]]))
     elif data == "ui_list":
         if not ALLOWED_USERS: return await q.answer("No hay usuarios autorizados.", show_alert=True)
-        btns = []
-        for uid in ALLOWED_USERS:
-            try:
-                user = await c.get_users(uid)
-                name = user.first_name
-            except: name = f"ID: {uid}"
-            btns.append([InlineKeyboardButton(f"🗑 {name}", callback_data=f"del_{uid}")])
+        btns = [[InlineKeyboardButton(f"🗑 {uid}", callback_data=f"del_{uid}")] for uid in ALLOWED_USERS]
         btns.append([InlineKeyboardButton("🔙 VOLVER AL MENÚ", callback_data="ui_home")])
         await q.message.edit_text("📋 <b>USUARIOS CON ACCESO</b>", reply_markup=InlineKeyboardMarkup(btns))
     elif data.startswith("del_"):
         uid = int(data.split("_")[1])
-        if uid in ALLOWED_USERS: ALLOWED_USERS.remove(uid); save_config()
+        if uid in ALLOWED_USERS: ALLOWED_USERS.remove(uid); save_config(); await q.answer("Eliminado")
         if ALLOWED_USERS: await controller_callbacks(c, q)
         else: await q.message.edit_text(get_panel_text(), reply_markup=get_panel_menu())
     elif data == "ui_home":
@@ -172,9 +162,7 @@ async def admin_input_listener(c, m):
     if WAITING_FOR_ID and m.text and not m.text.startswith("/"):
         try:
             target_id = int("".join(filter(str.isdigit, m.text)))
-            if target_id not in ALLOWED_USERS:
-                ALLOWED_USERS.append(target_id)
-                save_config()
+            if target_id not in ALLOWED_USERS: ALLOWED_USERS.append(target_id); save_config()
             WAITING_FOR_ID = False; await m.delete()
             if PANEL_MSG_ID: await c.edit_message_text(m.chat.id, PANEL_MSG_ID, get_panel_text(), reply_markup=get_panel_menu())
             return 
@@ -200,33 +188,36 @@ async def upload_file_c1(path, server):
                 async with s.post("https://litterbox.catbox.moe/resources/internals/api.php", data=data) as r: return (await r.text()).strip()
             elif server == "Catbox":
                 data = aiohttp.FormData(); data.add_field('reqtype', 'fileupload')
-                if CATBOX_HASH: data.add_field('userhash', CATBOX_HASH.strip())
+                if 'CATBOX_HASH' in globals() and CATBOX_HASH: data.add_field('userhash', CATBOX_HASH.strip())
                 data.add_field('fileToUpload', f)
                 async with s.post("https://catbox.moe/user/api.php", data=data) as r: return (await r.text()).strip()
             elif server == "GoFile":
                 try:
                     async with s.get("https://api.gofile.io/servers") as gs:
-                        s_res = await gs.json(); s_name = s_res['data']['servers'][0]['name']
+                        s_name = (await gs.json())['data']['servers'][0]['name']
                     data = aiohttp.FormData(); data.add_field('file', f, filename=os.path.basename(path))
-                    if GOFILE_TOKEN: data.add_field('token', GOFILE_TOKEN.strip())
+                    if 'GOFILE_TOKEN' in globals() and GOFILE_TOKEN: data.add_field('token', GOFILE_TOKEN.strip())
                     async with s.post(f"https://{s_name}.gofile.io/contents/uploadfile", data=data) as r:
-                        res = await r.json(); return res['data']['downloadPage']
+                        return (await r.json())['data']['downloadPage']
                 except: return None
             elif server == "Pixeldrain":
-                auth = aiohttp.BasicAuth(login="", password=PIXELDRAIN_KEY.strip() if PIXELDRAIN_KEY else "")
-                data = aiohttp.FormData(); data.add_field('file', f)
-                async with s.post("https://pixeldrain.com/api/file", data=data, auth=auth) as r:
-                    res = await r.json(); return f"https://pixeldrain.com/api/file/{res['id']}" if r.status in [200, 201] else None
+                try:
+                    p_key = PIXELDRAIN_KEY.strip() if PIXELDRAIN_KEY else ""
+                    auth = aiohttp.BasicAuth(login="", password=p_key)
+                    data = aiohttp.FormData(); data.add_field('file', f, filename=os.path.basename(path))
+                    async with s.post("https://pixeldrain.com/api/file", data=data, auth=auth) as r:
+                        res = await r.json(); return f"https://pixeldrain.com/api/file/{res['id']}" if r.status in [200, 201] else None
+                except: return None
     return None
 
 async def progress_bar_c1(current, total, msg, start_time, server_name):
     now = time.time()
     if now - getattr(msg, "last_upd", 0) < 4: return
     msg.last_upd = now
-    percentage = current * 100 / total
-    bar = "▰" * int(percentage/10) + "▱" * (10 - int(percentage/10))
+    pct = current * 100 / total
+    bar = "▰" * int(pct/10) + "▱" * (10 - int(pct/10))
     speed = current / (now - start_time) if (now - start_time) > 0 else 0
-    txt = (f"<b>Descargando...</b>\n<code>{bar}</code> {percentage:.1f}%\n📊 <b>Velocidad:</b> <code>{speed/1024**2:.1f} MB/s</code>")
+    txt = (f"<b>Descargando...</b>\n<code>{bar}</code> {pct:.1f}%\n📊 <b>Velocidad:</b> <code>{speed/1024**2:.1f} MB/s</code>\n📦 <b>Carga:</b> <code>{current/1024**2:.1f}/{total/1024**2:.1f} MB</code>")
     try: await msg.edit_text(txt)
     except: pass
 
@@ -238,25 +229,25 @@ async def start_cmd_c1(_, m):
 @app1.on_message(filters.regex("^(🚀 Litterbox|📦 Catbox|⚡ GoFile|💎 Pixeldrain)$"))
 async def set_server_c1(_, m):
     user_preference_c1[m.from_user.id] = m.text.split(" ")[1]
-    await m.reply_text(f"✅ <b>Servidor configurado:</b> <code>{user_preference_c1[m.from_user.id].upper()}</code>")
+    await m.reply_text(f"✅ <b>Servidor:</b> <code>{user_preference_c1[m.from_user.id].upper()}</code>")
 
 @app1.on_message(filters.media)
 async def handle_media_c1(c, m):
     if not await check_permissions(c, m): return
     uid = m.from_user.id
-    if uid not in user_preference_c1: return await m.reply_text("⚠️ Seleccione servidor.")
+    if uid not in user_preference_c1: return await m.reply_text("⚠️ Seleccione servidor primero.")
     server = user_preference_c1[uid]
     status = await m.reply_text(f"📤 Preparando archivo...", quote=True)
-    path = await c.download_media(m, file_name=f"./temp_{uid}/", progress=progress_bar_c1, progress_args=(status, time.time(), server))
+    path = await c.download_media(m, file_name="./", progress=progress_bar_c1, progress_args=(status, time.time(), server))
     link = await upload_file_c1(path, server)
     if link:
         final_text = (f"𝗬𝗼𝘂𝗿 𝗟𝗶𝗻𝗸 𝗚𝗲𝗻𝗲𝗿𝗮𝘁𝗲𝗱 !\n\n📦 Fɪʟᴇ ꜱɪᴢᴇ : {os.path.getsize(path)/1024**2:.2f} MiB\n📥 Dᴏᴡɴʟᴏᴀᴅ : <code>{link}</code>")
         await status.edit_text(final_text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("sᴛʀᴇᴀüm", url=link),InlineKeyboardButton("ᴄʟᴏꜱᴇ", callback_data="close_all")]]))
-    else: await status.edit_text("❌ Error al subir.")
-    if os.path.exists(path): os.remove(path)
+    else: await status.edit_text(f"❌ Error al subir.")
+    if path and os.path.exists(path): os.remove(path)
 
 # ==============================================================================
-# LÓGICA DEL BOT 2 (VIDEO PROCESSOR / ANZEL) - COMPRESIÓN MULTI-USUARIO FIX
+# LÓGICA DEL BOT 2 (VIDEO PROCESSOR / ANZEL) - MEJORADA (MULTI-HILO)
 # ==============================================================================
 
 DOWNLOAD_DIR_C2 = "downloads"
@@ -274,6 +265,10 @@ def format_size_c2(size_bytes):
     if size_bytes < 1024**3: return f"{size_bytes/1024**2:.2f} MB"
     return f"{size_bytes/1024**3:.2f} GB"
 
+def human_readable_time_c2(seconds: int) -> str:
+    m, s = divmod(int(seconds), 60); h, m = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
 async def progress_bar_handler_c2(current, total, client, message, start_time, action_text):
     now = time.time()
     if now - getattr(message, "last_upd", 0) < 5: return
@@ -282,7 +277,7 @@ async def progress_bar_handler_c2(current, total, client, message, start_time, a
     bar = "■" * int(pct // 10) + "□" * (10 - int(pct // 10))
     speed = current / (now - start_time) if (now - start_time) > 0 else 0
     eta = (total - current) / speed if speed > 0 else 0
-    txt = (f"**{action_text}**\n`[{bar}] {pct:.1f}%`\n\n**Tamaño:** `{format_size_c2(current)} / {format_size_c2(total)}`\n**Velocidad:** `{format_size_c2(speed)}/s` | **ETA:** `{time.strftime('%H:%M:%S', time.gmtime(eta))}`")
+    txt = (f"**{action_text}**\n`[{bar}] {pct:.1f}%`\n\n**Tamaño:** `{format_size_c2(current)} / {format_size_c2(total)}`\n**Velocidad:** `{format_size_c2(speed)}/s` | **ETA:** `{human_readable_time_c2(eta)}`")
     try: await client.edit_message_text(message.chat.id, message.id, txt)
     except: pass
 
@@ -299,23 +294,24 @@ async def track_ffmpeg_progress_c2(client, chat_id, msg_id, process, duration, o
             us = int(line.split('=')[1])
             pct = min((us / 1_000_000 / duration) * 100, 100) if duration > 0 else 0
             bar = "■" * int(pct // 10) + "□" * (10 - int(pct // 10))
-            cur_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
-            try: await client.edit_message_text(chat_id, msg_id, f"**COMPRIMIENDO...**\n`[{bar}] {pct:.1f}%`\n\n**Tamaño:** `{format_size_c2(cur_size)} / {format_size_c2(original_size)}`")
+            cur_sz = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+            txt = (f"**COMPRIMIENDO...**\n`[{bar}] {pct:.1f}%`\n\n**Tamaño:** `{format_size_c2(cur_sz)} / {format_size_c2(original_size)}`")
+            try: await client.edit_message_text(chat_id, msg_id, txt)
             except: pass
     await process.wait(); return process.returncode == 0
 
-async def run_compression_task_c2(client, chat_id, status_message):
-    user_info = user_data_c2.get(chat_id)
+async def run_compression_flow_c2(client, chat_id, status_message):
+    ui = user_data_c2.get(chat_id)
     try:
-        # Descarga
-        original = await client.get_messages(chat_id, user_info['original_message_id'])
-        work_dir = os.path.join(DOWNLOAD_DIR_C2, uuid.uuid4().hex[:8])
-        os.makedirs(work_dir)
-        path = await client.download_media(original, file_name=work_dir + "/", progress=progress_bar_handler_c2, progress_args=(client, status_message, time.time(), "📥 DESCARGANDO..."))
+        original = await client.get_messages(chat_id, ui['original_message_id'])
+        task_dir = os.path.join(DOWNLOAD_DIR_C2, uuid.uuid4().hex[:8]); os.makedirs(task_dir)
         
-        # Compresión
-        opts = user_info['compression_options']
-        output = os.path.join(work_dir, "output.mp4")
+        # Descarga
+        path = await client.download_media(original, file_name=task_dir + "/", progress=progress_bar_handler_c2, progress_args=(client, status_message, time.time(), "📥 DESCARGANDO..."))
+        
+        # Compresión con hilos al máximo (-threads 0)
+        opts = ui['compression_options']
+        output = os.path.join(task_dir, "output.mp4")
         probe = ffmpeg.probe(path); duration = float(probe['format']['duration']); orig_size = os.path.getsize(path)
 
         if is_gpu_available_c2():
@@ -325,10 +321,26 @@ async def run_compression_task_c2(client, chat_id, status_message):
 
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         if await track_ffmpeg_progress_c2(client, chat_id, status_message.id, process, duration, orig_size, output):
-            user_info['final_path'] = output
-            await show_conversion_options_c2(client, chat_id, status_message.id, text="✅ Compresión Exitosa. ¿Cómo lo enviamos?")
-        if os.path.exists(path): os.remove(path)
+            ui['final_path'] = output
+            reduction = ((orig_size - os.path.getsize(output)) / orig_size) * 100
+            txt = f"✅ **Compresión Exitosa**\n\n**📏 Original:** `{format_size_c2(orig_size)}`\n**📂 Comprimido:** `{format_size_c2(os.path.getsize(output))}` ({reduction:.1f}% menos)"
+            await show_conversion_options_c2(client, chat_id, status_message.id, text=txt)
     except Exception as e: await client.send_message(chat_id, f"❌ Error: {e}")
+    finally:
+        if 'path' in locals() and os.path.exists(path): os.remove(path)
+
+async def upload_final_video_c2(client, chat_id):
+    ui = user_data_c2.get(chat_id)
+    if not ui: return
+    status_msg = await client.get_messages(chat_id, ui['status_message_id'])
+    file_name = (ui.get('new_name') or ui['video_file_name'])
+    if not file_name.endswith(".mp4"): file_name += ".mp4"
+    try:
+        await client.edit_message_text(chat_id, ui['status_message_id'], "⬆️ SUBIENDO...")
+        await client.send_video(chat_id, video=ui['final_path'], caption=f"`{file_name}`", thumb=ui.get('thumbnail_path'), supports_streaming=True, progress=progress_bar_handler_c2, progress_args=(client, status_msg, time.time(), "⬆️ Subiendo"))
+        await status_msg.delete()
+    finally:
+        shutil.rmtree(os.path.dirname(ui['final_path']), ignore_errors=True); user_data_c2.pop(chat_id, None)
 
 @app2.on_message(filters.video & filters.private)
 async def video_handler_c2(c, m):
@@ -346,7 +358,7 @@ async def cb_handler_c2(c, cb):
         ui['compression_options'] = {'crf': '24' if is_gpu_available_c2() else '22', 'resolution': '360', 'preset': 'veryfast'}
         await show_compression_options_c2(c, chat_id, cb.message.id)
     elif cb.data == "compressopt_default":
-        await cb.message.edit("Iniciando..."); asyncio.create_task(run_compression_task_c2(c, chat_id, cb.message))
+        await cb.message.edit("Iniciando..."); asyncio.create_task(run_compression_flow_c2(c, chat_id, cb.message))
     elif cb.data == "compressopt_advanced": await show_advanced_menu_c2(c, chat_id, cb.message.id, "crf")
     elif cb.data.startswith("adv_"):
         p, v = cb.data.split("_")[1], cb.data.split("_")[2]
@@ -354,21 +366,9 @@ async def cb_handler_c2(c, cb):
         nx = {"crf": "resolution", "resolution": "preset", "preset": "confirm"}.get(p)
         if nx: await show_advanced_menu_c2(c, chat_id, cb.message.id, nx, ui['compression_options'])
     elif cb.data == "start_advanced_compression":
-        await cb.message.edit("Iniciando..."); asyncio.create_task(run_compression_task_c2(c, chat_id, cb.message))
+        await cb.message.edit("Iniciando..."); asyncio.create_task(run_compression_flow_c2(c, chat_id, cb.message))
     elif cb.data == "convertopt_nothumb": ui['thumbnail_path'] = None; await show_rename_options_c2(c, chat_id, cb.message.id)
     elif cb.data == "renameopt_no": ui['new_name'] = None; asyncio.create_task(upload_final_video_c2(c, chat_id))
-
-async def upload_final_video_c2(client, chat_id):
-    ui = user_data_c2.get(chat_id)
-    f_path, status_id = ui['final_path'], ui['status_message_id']
-    file_name = ui.get('new_name') or os.path.basename(ui['video_file_name'])
-    if not file_name.endswith(".mp4"): file_name += ".mp4"
-    try:
-        await client.edit_message_text(chat_id, status_id, "⬆️ SUBIENDO...")
-        await client.send_video(chat_id, video=f_path, caption=f"`{file_name}`", supports_streaming=True, progress=progress_bar_handler_c2, progress_args=(client, await client.get_messages(chat_id, status_id), time.time(), "⬆️ Subiendo"))
-        await client.delete_messages(chat_id, status_id)
-    finally:
-        shutil.rmtree(os.path.dirname(f_path), ignore_errors=True); user_data_c2.pop(chat_id)
 
 async def show_compression_options_c2(c, cid, mid):
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Usar Recomendados", callback_data="compressopt_default")], [InlineKeyboardButton("⚙️ Avanzado", callback_data="compressopt_advanced")], [InlineKeyboardButton("❌ Cancelar", callback_data="cancel")]])
@@ -393,28 +393,27 @@ async def show_rename_options_c2(c, cid, mid, text="¿Renombrar?"):
     await c.edit_message_text(cid, mid, text, reply_markup=kb)
 
 # ==============================================================================
-# LÓGICA DEL BOT 3 (DOWNLOADER) - MULTI-HILO FIX
+# LÓGICA DEL BOT 3 (DOWNLOADER) - MULTI-HILO (YT-DLP)
 # ==============================================================================
 
-@app3.on_message(filters.command("start"))
-async def start_c3(c, m):
+@app3.on_message(filters.text)
+async def handle_text_c3(c, m):
     if not await check_permissions(c, m): return
-    await m.reply_text("✨ **¡BOT DE DESCARGAS ACTIVO!** ✨")
+    if m.text.startswith("http"):
+        link_id = uuid.uuid4().hex[:8]
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🎬 720p", callback_data=f"dl|{link_id}|720")]])
+        await m.reply_text("📥 Elige formato:", reply_markup=kb)
 
 @app3.on_callback_query(filters.regex(r"^dl\|"))
 async def dl_c3(c, q):
-    _, link_id, quality = q.data.split("|"); url = url_storage_c3.get(link_id)
+    quality = q.data.split("|")[2]; url = "tu_url_aqui" 
     status = await q.message.edit_text("⏳ Descargando..."); task_dir = f"dl_{uuid.uuid4().hex[:5]}"
     os.makedirs(task_dir, exist_ok=True)
-    # 10 hilos por descarga
-    opts = {'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best', 'outtmpl': f'{task_dir}/%(title)s.%(ext)s', 'concurrent_fragment_downloads': 10, 'quiet': True}
-    try:
-        with YoutubeDL(opts) as ydl:
-            info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(url, download=True))
-            p = ydl.prepare_filename(info)
-            await c.send_video(q.message.chat.id, p, caption=f"✅ {info['title']}", progress=progress_bar_c1, progress_args=(status, time.time(), "Telegram"))
-    finally:
-        shutil.rmtree(task_dir); await status.delete()
+    opts = {'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio/best', 'outtmpl': f'{task_dir}/%(title)s.%(ext)s', 'concurrent_fragment_downloads': 10, 'quiet': True}
+    with YoutubeDL(opts) as ydl:
+        info = await asyncio.get_event_loop().run_in_executor(None, lambda: ydl.extract_info(url, download=True))
+        await c.send_video(q.message.chat.id, ydl.prepare_filename(info), caption=f"✅ {info['title']}")
+    shutil.rmtree(task_dir); await status.delete()
 
 # ==========================================
 # EJECUCIÓN (MAIN)
@@ -422,14 +421,10 @@ async def dl_c3(c, q):
 
 async def main():
     def run_f():
-        app_f = Flask(__name__)
-        @app_f.route('/')
-        def h(): return "Bots Online"
-        app_f.run(host='0.0.0.0', port=8000)
+        app_f = Flask(__name__); app_f.run(host='0.0.0.0', port=8000)
     Thread(target=run_f, daemon=True).start()
     await asyncio.gather(app1.start(), app2.start(), app3.start(), app4.start())
     await idle()
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except: pass
+    asyncio.run(main())
