@@ -14,9 +14,9 @@ import psutil
 import re
 import logging
 import ffmpeg
-import GPUtil 
 from threading import Thread
 from flask import Flask
+
 from pyrogram import Client, filters, idle
 from pyrogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, 
@@ -26,32 +26,29 @@ from pyrogram.types import (
 from pyrogram.errors import MessageNotModified, FloodWait
 from yt_dlp import YoutubeDL
 
-# Aplicar nest_asyncio inmediatamente
+# Aplicar nest_asyncio para permitir bucles anidados
 nest_asyncio.apply()
 
+# Configuración desde variables de entorno
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
+
+# AGREGAS ESTA LÍNEA para "importar" tu ID desde la configuración de Kaggle
+ADMIN_ID = int(os.getenv("ADMIN_ID")) 
+
+# Inicialización de las 4 apps
+app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT1_TOKEN"))
+app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT2_TOKEN"))
+app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT3_TOKEN"))
+app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=os.getenv("BOT4_TOKEN"))
+
+
 # ==========================================
-# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL (CORREGIDO)
+# ⚙️ CONFIGURACIÓN Y ESTADO GLOBAL (ESTILO REFERENCIA)
 # ==========================================
 
-# 1. Carga segura de variables de entorno
-# Usamos .get() y valores por defecto para que el bot no "muera" si falta un dato
-API_ID = int(os.environ.get("API_ID", 0))
-API_HASH = os.environ.get("API_HASH", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", 0))
-
-BOT1_TOKEN = os.environ.get("BOT1_TOKEN", "")
-BOT2_TOKEN = os.environ.get("BOT2_TOKEN", "")
-BOT3_TOKEN = os.environ.get("BOT3_TOKEN", "")
-BOT4_TOKEN = os.environ.get("BOT4_TOKEN", "")
-
-# 2. Inicialización UNIFICADA de las 4 apps
-# Solo se definen una vez aquí.
-app1 = Client("bot1", api_id=API_ID, api_hash=API_HASH, bot_token=BOT1_TOKEN, workers=20)
-app2 = Client("bot2", api_id=API_ID, api_hash=API_HASH, bot_token=BOT2_TOKEN, workers=20)
-app3 = Client("bot3", api_id=API_ID, api_hash=API_HASH, bot_token=BOT3_TOKEN, workers=20)
-app4 = Client("bot4", api_id=API_ID, api_hash=API_HASH, bot_token=BOT4_TOKEN, workers=5)
-
-CONFIG_FILE = "/kaggle/working/system_config.json"
+CONFIG_FILE = "system_config.json"
+ADMIN_ID = int(os.getenv("ADMIN_ID", "12345678")) # Asegúrate que esto cargue tu ID real
 
 def load_config():
     if os.path.exists(CONFIG_FILE):
@@ -63,15 +60,14 @@ def load_config():
     return "OFF", []
 
 def save_config():
-    try:
-        data = {"mode": SYSTEM_MODE, "allowed": ALLOWED_USERS}
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(data, f, indent=4)
-    except: pass
+    data = {"mode": SYSTEM_MODE, "allowed": ALLOWED_USERS}
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(data, f)
 
-# Inicialización de variables de estado
-SYSTEM_MODE, ALLOWED_USERS = load_config()
+# --- VARIABLES GLOBALES (Igual que tu código funcional) ---
+SYSTEM_MODE, ALLOWED_USERS = load_config() # Modos: "ON", "OFF", "PRIVATE"
 WAITING_FOR_ID = False
+VIEWING_LIST = False
 PANEL_MSG_ID = None
 
 # Definición de clientes (Asumo que ya los tienes iniciados como en tu ejemplo)
@@ -435,19 +431,6 @@ def is_gpu_available_c2():
     except:
         return False
 
-def get_best_gpu_c2():
-    """Selecciona la GPU T4 con menos carga actual para balancear el trabajo"""
-    try:
-        import GPUtil
-        gpus = GPUtil.getGPUs()
-        if not gpus or len(gpus) < 2: 
-            return "0"
-        # Ordenar las GPUs por menor uso de memoria actual
-        best_gpu = sorted(gpus, key=lambda x: x.memoryUsed)[0]
-        return str(best_gpu.id)
-    except:
-        return "0"
-
 def format_size_c2(size_bytes):
     if size_bytes is None: return "0 B"
     if size_bytes < 1024: return f"{size_bytes} Bytes"
@@ -526,39 +509,34 @@ async def download_video_c2(client, chat_id, status_message):
 async def run_compression_flow_c2(client, chat_id, status_message):
     downloaded_path = None
     try:
-        # La descarga ahora es llamada de forma asíncrona
         downloaded_path = await download_video_c2(client, chat_id, status_message)
         if not downloaded_path: return
 
         user_info = user_data_c2[chat_id]
         user_info['state'] = 'compressing'
         opts = user_info['compression_options']
-        # Usamos UUID para que si dos personas comprimen a la vez, los archivos no choquen
-        output_path = os.path.join(DOWNLOAD_DIR_C2, f"comp_{uuid.uuid4().hex[:5]}_{chat_id}.mp4")
+        output_path = os.path.join(DOWNLOAD_DIR_C2, f"compressed_{chat_id}.mp4")
 
         probe = ffmpeg.probe(downloaded_path)
         duration = float(probe.get('format', {}).get('duration', 0))
         original_size = os.path.getsize(downloaded_path)
 
         if is_gpu_available_c2():
-            selected_gpu = get_best_gpu_c2() # <--- Selecciona T4 (0 o 1)
-            await update_message_c2(client, chat_id, status_message.id, f"🗜️ COMPRIMIENDO (GPU {selected_gpu})...")
-            
+            await update_message_c2(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (GPU)...")
             preset_map = {'ultrafast': 'p1', 'veryfast': 'p2', 'fast': 'p3', 'medium': 'p4', 'slow': 'p6'}
             gpu_preset = preset_map.get(opts['preset'], 'p4')
-            
             cmd = [
-                'ffmpeg', '-hwaccel', 'cuda', '-hwaccel_device', selected_gpu,
-                '-hwaccel_output_format', 'cuda', '-i', downloaded_path,
+                'ffmpeg', '-hwaccel', 'cuda', '-hwaccel_output_format', 'cuda',
+                '-i', downloaded_path,
                 '-vf', f"scale_cuda=-2:{opts['resolution']}",
                 '-c:v', 'h264_nvenc', '-preset', gpu_preset,
                 '-rc', 'vbr', '-cq', opts['crf'], '-b:v', '0',
                 '-acodec', 'aac', '-b:a', '64k', '-movflags', '+faststart',
                 '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
-            engine_text = f"GPU T4 (Slot {selected_gpu})"
+            engine_text = "GPU T4"
         else:
-            await update_message_c2(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO (CPU)...")
+            await update_message_c2(client, chat_id, status_message.id, "🗜️ COMPRIMIENDO...")
             cmd = [
                 'ffmpeg', '-i', downloaded_path,
                 '-vf', f"scale=-2:{opts['resolution']}",
@@ -566,26 +544,18 @@ async def run_compression_flow_c2(client, chat_id, status_message):
                 '-vcodec', 'libx264', '-acodec', 'aac', '-b:a', '64k',
                 '-movflags', '+faststart', '-progress', 'pipe:1', '-nostats', '-y', output_path
             ]
-            engine_text = "CPU Estándar"
+            engine_text = "Estándar"
 
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         success = await track_ffmpeg_progress_c2(client, chat_id, status_message.id, process, duration, original_size, output_path)
 
-        if success:
-            user_info['final_path'] = output_path
-            compressed_size = os.path.getsize(output_path)
-            reduction = ((original_size - compressed_size) / original_size) * 100
-            summary = (f"✅ **Compresión Finalizada ({engine_text})**\n\n"
-                       f"**Reducción:** `{reduction:.1f}%` | **Tamaño:** `{format_size_c2(compressed_size)}` \n"
-                       f"¿Cómo procedemos?")
-            await show_conversion_options_c2(client, chat_id, status_message.id, text=summary)
-    except Exception as e:
-        await client.send_message(chat_id, f"❌ Error en flujo: {e}")
-    finally:
-        if downloaded_path and os.path.exists(downloaded_path): 
-            try: os.remove(downloaded_path)
-            except: pass
+        if not success:
+            await update_message_c2(client, chat_id, status_message.id, "❌ Error de compresión.")
+            return
 
+        user_info['final_path'] = output_path
+        compressed_size = os.path.getsize(output_path)
+        reduction = ((original_size - compressed_size) / original_size) * 100 if original_size > 0 else 0
         
         title = f"✅ **Compresión Exitosa ({engine_text})**" if is_gpu_available_c2() else "✅ **Compresión Exitosa**"
         summary = (f"{title}\n\n"
@@ -737,73 +707,52 @@ async def callback_handler_c2(client, cb: CallbackQuery):
     if not user_info:
         await cb.answer("Esta operación ha expirado.", show_alert=True)
         return
-    
     action = cb.data
     user_info['status_message_id'] = cb.message.id
     await cb.answer()
 
-    # --- LÓGICA DE CANCELACIÓN ---
     if action == "cancel":
         user_info['state'] = 'cancelled'
-        await cb.message.edit("🛑 Operación cancelada.")
+        await cb.message.edit("Operación cancelada.")
         clean_up_c2(chat_id)
-
-    # --- FLUJO DE COMPRESIÓN ---
     elif action == "action_compress":
         is_gpu = is_gpu_available_c2()
         user_info['compression_options'] = {'crf': '24' if is_gpu else '22', 'resolution': '360', 'preset': 'veryfast'}
         await show_compression_options_c2(client, chat_id, cb.message.id)
-
     elif action == "compressopt_default":
-        # USAMOS create_task para que la compresión corra sola y el bot quede libre
-        asyncio.create_task(run_compression_flow_c2(client, chat_id, cb.message))
-
+        await cb.message.edit(f"Iniciando compresión {'GPU' if is_gpu_available_c2() else ''}...")
+        await run_compression_flow_c2(client, chat_id, cb.message)
     elif action == "compressopt_advanced":
         await show_advanced_menu_c2(client, chat_id, cb.message.id, "crf")
-
     elif action.startswith("adv_"):
         part, value = action.split("_")[1], action.split("_")[2]
         user_info.setdefault('compression_options', {})[part] = value
         next_step = {"crf": "resolution", "resolution": "preset", "preset": "confirm"}.get(part)
-        if next_step: 
-            await show_advanced_menu_c2(client, chat_id, cb.message.id, next_step, user_info['compression_options'])
-
+        if next_step: await show_advanced_menu_c2(client, chat_id, cb.message.id, next_step, user_info['compression_options'])
     elif action == "start_advanced_compression":
-        await cb.message.edit(f"⚙️ Aplicando configuración avanzada...")
-        asyncio.create_task(run_compression_flow_c2(client, chat_id, cb.message))
-
-    # --- FLUJO DE SOLO CONVERTIR / ENVIAR ---
+        await cb.message.edit(f"Opciones guardadas. Iniciando compresión {'GPU' if is_gpu_available_c2() else ''}...")
+        await run_compression_flow_c2(client, chat_id, cb.message)
     elif action == "action_convert_only":
-        await cb.message.edit("📥 Iniciando descarga rápida...")
-        # Creamos una tarea interna para no frenar al bot
-        async def dl_task():
-            path = await download_video_c2(client, chat_id, cb.message)
-            if path:
-                await show_conversion_options_c2(client, chat_id, cb.message.id, text="✅ Descarga completa.")
-        asyncio.create_task(dl_task())
-
+        await cb.message.edit("Iniciando descarga...")
+        if await download_video_c2(client, chat_id, cb.message):
+            await show_conversion_options_c2(client, chat_id, cb.message.id, text="Descarga completa. ¿Cómo quieres continuar?")
     elif action == "convertopt_withthumb":
         user_info['state'] = 'waiting_for_thumbnail'
-        await cb.message.edit("🖼️ Por favor, envía la imagen que quieres como miniatura.")
-
+        await cb.message.edit("Por favor, envía la imagen para la miniatura.")
     elif action == "convertopt_nothumb":
         user_info['thumbnail_path'] = None
         await show_rename_options_c2(client, chat_id, cb.message.id)
-
     elif action == "convertopt_asfile":
         user_info['send_as_file'] = True
         await show_rename_options_c2(client, chat_id, cb.message.id)
-
-    # --- LÓGICA DE RENOMBRADO ---
     elif action == "renameopt_yes":
         user_info['state'] = 'waiting_for_new_name'
-        await cb.message.edit("✏️ Envíame el nuevo nombre para el archivo (sin extensión).")
-
+        await cb.message.edit("Ok, envíame el nuevo nombre (sin extensión).")
     elif action == "renameopt_no":
         user_info['new_name'] = None
         user_info['state'] = 'uploading'
-        await cb.message.edit("🚀 Preparando subida directa...")
-        asyncio.create_task(upload_final_video_c2(client, chat_id))
+        await cb.message.edit("Entendido. Preparando para subir...")
+        await upload_final_video_c2(client, chat_id)
 
 @app2.on_message(filters.photo & filters.private)
 async def thumbnail_handler_c2(client, message: Message):
@@ -1093,17 +1042,14 @@ async def download_logic_c3(c, q):
         if path and os.path.exists(path): os.remove(path)
 
 # ==========================================
-# EJECUCIÓN (MAIN) - VERSIÓN FINAL CORREGIDA
+# EJECUCIÓN (MAIN)
 # ==========================================
 
 async def main():
     print("🚀 SISTEMA INICIADO...")
     
     # Iniciamos el servidor Flask en otro hilo
-    try:
-        Thread(target=run_flask_server, daemon=True).start()
-    except Exception as e:
-        print(f"⚠️ Error al iniciar Flask: {e}")
+    Thread(target=run_flask_server).start()
 
     # Iniciamos los 4 bots
     await app1.start()
@@ -1111,34 +1057,22 @@ async def main():
     await app3.start()
     await app4.start()
     
-    try:
-        me1 = await app1.get_me()
-        me2 = await app2.get_me()
-        me3 = await app3.get_me()
-        me4 = await app4.get_me()
+    me1 = await app1.get_me()
+    me2 = await app2.get_me()
+    me3 = await app3.get_me()
+    me4 = await app4.get_me()
 
-        print(f"✅ Bot Uploader: @{me1.username}")
-        print(f"✅ Bot AnzelGo (Integrado): @{me2.username}")
-        print(f"✅ Bot Descargas: @{me3.username}")
-        print(f"✅ Master Controller: @{me4.username}")
-    except Exception as e:
-        print(f"⚠️ Error al obtener info de los bots: {e}")
+    print(f"✅ Bot Uploader: @{me1.username}")
+    print(f"✅ Bot AnzelGo (Integrado): @{me2.username}")
+    print(f"✅ Bot Descargas: @{me3.username}")
+    print(f"✅ Master Controller: @{me4.username}")
 
     # Mantenemos vivo el loop
-    print("🔔 Bots en línea y operando desde la nube de Kaggle.")
     await idle()
     
     # Al detenerse
-    await app1.stop()
-    await app2.stop()
-    await app3.stop()
-    await app4.stop()
+    await app1.stop(); await app2.stop(); await app3.stop(); await app4.stop()
 
 if __name__ == "__main__":
-    try:
-        # Ejecución del loop principal
-        asyncio.get_event_loop().run_until_complete(main())
-    except KeyboardInterrupt:
-        print("\n🛑 Detenido por el usuario.")
-    except Exception as e:
-        print(f"❌ Error crítico: {e}")
+    try: asyncio.get_event_loop().run_until_complete(main())
+    except KeyboardInterrupt: pass
